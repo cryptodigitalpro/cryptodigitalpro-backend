@@ -1,8 +1,3 @@
-app.use((req,res,next)=>{
-  console.log(new Date().toISOString(), req.method, req.url, req.ip);
-  next();
-});
-
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
@@ -14,9 +9,19 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Database
+// ==========================
+// LOG REQUESTS
+// ==========================
+app.use((req, res, next) => {
+  console.log(new Date().toISOString(), req.method, req.url, req.ip);
+  next();
+});
+
+// ==========================
+// DATABASE
+// ==========================
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL
+  connectionString: process.env.DATABASE_URL,
 });
 
 // ==========================
@@ -24,20 +29,6 @@ const pool = new Pool({
 // ==========================
 app.get("/", (req, res) => {
   res.send("CryptoDigitalPro API running");
-});
-
-// ==========================
-// USERS (admin)
- // ==========================
-app.get("/api/users", async (req, res) => {
-  try {
-    const users = await pool.query(
-      "SELECT id, full_name, email, balance, kyc_status, is_admin FROM users"
-    );
-    res.json(users.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
 });
 
 // ==========================
@@ -84,67 +75,80 @@ app.post("/api/login", async (req, res) => {
     token,
     name: user.full_name,
     balance: user.balance,
-    is_admin: user.is_admin
+    is_admin: user.is_admin,
   });
 });
 
 // ==========================
-// PROFILE
+// AUTH MIDDLEWARE
 // ==========================
-app.get("/api/me", async (req, res) => {
+function verifyToken(req, res, next) {
   const token = req.headers.authorization;
   if (!token) return res.status(401).json({ error: "No token" });
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await pool.query(
-      "SELECT id,full_name,email,balance,kyc_status,is_admin FROM users WHERE id=$1",
-      [decoded.id]
-    );
-
-    res.json(user.rows[0]);
+    req.user = decoded;
+    next();
   } catch {
     res.status(401).json({ error: "Invalid token" });
   }
+}
+
+function adminOnly(req, res, next) {
+  if (!req.user.is_admin) {
+    return res.status(403).json({ error: "Admins only" });
+  }
+  next();
+}
+
+// ==========================
+// PROFILE
+// ==========================
+app.get("/api/me", verifyToken, async (req, res) => {
+  const user = await pool.query(
+    "SELECT id,full_name,email,balance,kyc_status,is_admin FROM users WHERE id=$1",
+    [req.user.id]
+  );
+
+  res.json(user.rows[0]);
 });
 
 // ==========================
-app.listen(3000, () => {
-  console.log("Server running on http://localhost:3000");
-});
-
-const { verifyToken, adminOnly } = require("./middleware/auth");
-
-// Get all users
+// ADMIN
+// ==========================
 app.get("/api/admin/users", verifyToken, adminOnly, async (req, res) => {
-  const users = await pool.query("SELECT id,email,balance,kyc_status,is_admin FROM users");
+  const users = await pool.query(
+    "SELECT id,email,balance,kyc_status,is_admin,is_blocked FROM users"
+  );
   res.json(users.rows);
 });
 
-// Add fake balance
 app.post("/api/admin/deposit", verifyToken, adminOnly, async (req, res) => {
   const { user_id, amount } = req.body;
-  await pool.query("UPDATE users SET balance = balance + $1 WHERE id=$2", [amount, user_id]);
+  await pool.query("UPDATE users SET balance = balance + $1 WHERE id=$2", [
+    amount,
+    user_id,
+  ]);
   res.json({ success: true });
 });
 
-// Block user
 app.post("/api/admin/block", verifyToken, adminOnly, async (req, res) => {
   const { user_id } = req.body;
   await pool.query("UPDATE users SET is_blocked = true WHERE id=$1", [user_id]);
   res.json({ success: true });
 });
 
-app.use((req,res,next)=>{
-  console.log(req.method, req.url, req.ip);
-  next();
+// ==========================
+// HEALTH CHECK
+// ==========================
+app.get("/api/user", (req, res) => {
+  res.json({ message: "OK" });
 });
 
-app.post("/api/login", async (req,res)=>{
-  ...
-  console.log("LOGIN:", email, req.ip, new Date());
-});
-
+// ==========================
+// START SERVER
+// ==========================
 app.listen(process.env.PORT || 3000, () => {
   console.log("Server running");
 });
