@@ -149,3 +149,65 @@ app.post("/api/admin/deposit/:userId", auth, admin, async(req,res)=>{
 
 /* ================= START ================= */
 app.listen(3000, ()=>console.log("Server running"));
+
+// ================= LOANS =================
+
+// Apply for loan (USER)
+app.post("/api/apply-loan", auth, async (req,res)=>{
+  const { amount, duration, loan_type } = req.body;
+
+  if(!amount || !duration || !loan_type)
+    return res.status(400).json({ error:"Missing fields" });
+
+  const loan = await db.one(
+    `INSERT INTO loans (user_id, amount, duration, loan_type, status)
+     VALUES ($1,$2,$3,$4,'pending')
+     RETURNING *`,
+    [req.user.id, amount, duration, loan_type]
+  );
+
+  res.json(loan);
+});
+
+// Get my loans (USER)
+app.get("/api/my-loans", auth, async (req,res)=>{
+  const loans = await db.any(
+    "SELECT * FROM loans WHERE user_id=$1 ORDER BY id DESC",
+    [req.user.id]
+  );
+  res.json(loans);
+});
+
+// Get all loans (ADMIN)
+app.get("/api/admin/loans", authAdmin, async (req,res)=>{
+  const loans = await db.any(`
+    SELECT loans.*, users.full_name, users.email
+    FROM loans
+    JOIN users ON users.id = loans.user_id
+    ORDER BY loans.id DESC
+  `);
+  res.json(loans);
+});
+
+// Approve / Reject loan (ADMIN)
+app.post("/api/admin/loan-status", authAdmin, async (req,res)=>{
+  const { loan_id, status } = req.body;
+
+  if(!["approved","rejected"].includes(status))
+    return res.status(400).json({ error:"Invalid status" });
+
+  const loan = await db.one(
+    "UPDATE loans SET status=$1 WHERE id=$2 RETURNING *",
+    [status, loan_id]
+  );
+
+  // If approved → credit balance
+  if(status==="approved"){
+    await db.none(
+      "UPDATE users SET balance = balance + $1 WHERE id=$2",
+      [loan.amount, loan.user_id]
+    );
+  }
+
+  res.json(loan);
+});
