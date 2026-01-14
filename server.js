@@ -10,6 +10,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+/* ================= DATABASE ================= */
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false }
@@ -17,12 +18,12 @@ const pool = new Pool({
 
 const JWT_SECRET = process.env.JWT_SECRET || "secret123";
 
-/* ================= DATABASE ================= */
+/* ================= CREATE TABLES ================= */
 await pool.query(`
 CREATE TABLE IF NOT EXISTS users (
   id SERIAL PRIMARY KEY,
-  email TEXT UNIQUE,
-  password TEXT,
+  email TEXT UNIQUE NOT NULL,
+  password TEXT NOT NULL,
   full_name TEXT,
   balance NUMERIC DEFAULT 0,
   is_admin BOOLEAN DEFAULT false,
@@ -33,6 +34,8 @@ CREATE TABLE IF NOT EXISTS loans (
   id SERIAL PRIMARY KEY,
   user_id INTEGER REFERENCES users(id),
   amount NUMERIC,
+  duration INTEGER,
+  loan_type TEXT,
   status TEXT DEFAULT 'pending',
   locked BOOLEAN DEFAULT false,
   insurance NUMERIC DEFAULT 0,
@@ -43,12 +46,16 @@ CREATE TABLE IF NOT EXISTS loans (
 
 /* ================= HELPERS ================= */
 function createToken(user){
-  return jwt.sign({ id:user.id, isAdmin:user.is_admin }, JWT_SECRET, { expiresIn:"7d" });
+  return jwt.sign(
+    { id:user.id, isAdmin:user.is_admin },
+    JWT_SECRET,
+    { expiresIn:"7d" }
+  );
 }
 
 function auth(req,res,next){
   try{
-    const token = req.headers.authorization.split(" ")[1];
+    const token = req.headers.authorization?.split(" ")[1];
     const data = jwt.verify(token, JWT_SECRET);
     req.user = data;
     next();
@@ -57,8 +64,8 @@ function auth(req,res,next){
   }
 }
 
-function admin(req,res,next){
-  if(!req.user.isAdmin) return res.status(403).json({error:"Admin only"});
+function authAdmin(req,res,next){
+  if(!req.user?.isAdmin) return res.status(403).json({error:"Admin only"});
   next();
 }
 
@@ -81,78 +88,24 @@ app.post("/api/register", async (req,res)=>{
 app.post("/api/login", async (req,res)=>{
   const { email,password } = req.body;
   const q = await pool.query("SELECT * FROM users WHERE email=$1",[email]);
-  if(!q.rows.length) return res.status(400).json({error:"Invalid"});
+  if(!q.rows.length) return res.status(400).json({error:"Invalid credentials"});
 
   const ok = await bcrypt.compare(password,q.rows[0].password);
-  if(!ok) return res.status(400).json({error:"Invalid"});
+  if(!ok) return res.status(400).json({error:"Invalid credentials"});
 
   res.json({ token:createToken(q.rows[0]) });
 });
 
 /* ================= USER ================= */
 app.get("/api/me", auth, async(req,res)=>{
-  const q = await pool.query("SELECT id,email,full_name,balance FROM users WHERE id=$1",[req.user.id]);
+  const q = await pool.query(
+    "SELECT id,email,full_name,balance,is_admin FROM users WHERE id=$1",
+    [req.user.id]
+  );
   res.json(q.rows[0]);
 });
 
-/* ================= LOANS ================= */
-app.post("/api/loan", auth, async(req,res)=>{
-  const { amount } = req.body;
-  await pool.query(
-    "INSERT INTO loans(user_id,amount) VALUES($1,$2)",
-    [req.user.id,amount]
-  );
-  res.json({ success:true });
-});
-
-app.get("/api/my-loans", auth, async (req,res)=>{
-  const q = await pool.query("SELECT * FROM loans WHERE user_id=$1",[req.user.id]);
-  res.json(q.rows);
-});
-
-/* ================= ADMIN ================= */
-app.get("/api/admin/users", auth, admin, async(req,res)=>{
-  const q = await pool.query("SELECT id,email,full_name,balance FROM users");
-  res.json(q.rows);
-});
-
-app.get("/api/admin/loans", auth, admin, async(req,res)=>{
-  const q = await pool.query(`
-    SELECT loans.*, users.email, users.full_name
-    FROM loans JOIN users ON loans.user_id = users.id
-  `);
-  res.json(q.rows);
-});
-
-app.post("/api/admin/approve/:id", auth, admin, async(req,res)=>{
-  await pool.query("UPDATE loans SET status='approved' WHERE id=$1",[req.params.id]);
-  res.json({success:true});
-});
-
-app.post("/api/admin/lock/:id", auth, admin, async(req,res)=>{
-  const { insurance, tax } = req.body;
-  await pool.query(
-    "UPDATE loans SET locked=true, insurance=$1, tax=$2 WHERE id=$3",
-    [insurance,tax,req.params.id]
-  );
-  res.json({success:true});
-});
-
-app.post("/api/admin/deposit/:userId", auth, admin, async(req,res)=>{
-  const { amount } = req.body;
-  await pool.query(
-    "UPDATE users SET balance = balance + $1 WHERE id=$2",
-    [amount,req.params.userId]
-  );
-  res.json({success:true});
-});
-
-/* ================= START ================= */
-app.listen(3000, ()=>console.log("Server running"));
-
-/* ================= LOANS ================= */
-
-// User applies for loan
+/* ================= USER LOANS ================= */
 app.post("/api/apply-loan", auth, async (req,res)=>{
   const { amount, duration, loan_type } = req.body;
 
@@ -160,8 +113,8 @@ app.post("/api/apply-loan", auth, async (req,res)=>{
     return res.status(400).json({ error:"Missing fields" });
 
   const q = await pool.query(
-    `INSERT INTO loans (user_id, amount, duration, loan_type, status)
-     VALUES ($1,$2,$3,$4,'pending')
+    `INSERT INTO loans (user_id, amount, duration, loan_type)
+     VALUES ($1,$2,$3,$4)
      RETURNING *`,
     [req.user.id, amount, duration, loan_type]
   );
@@ -169,7 +122,6 @@ app.post("/api/apply-loan", auth, async (req,res)=>{
   res.json(q.rows[0]);
 });
 
-// Get my loans (USER)
 app.get("/api/my-loans", auth, async (req,res)=>{
   const q = await pool.query(
     "SELECT * FROM loans WHERE user_id=$1 ORDER BY id DESC",
@@ -178,8 +130,15 @@ app.get("/api/my-loans", auth, async (req,res)=>{
   res.json(q.rows);
 });
 
-// Get all loans (ADMIN)
-app.get("/api/admin/loans", auth, admin, async (req,res)=>{
+/* ================= ADMIN ================= */
+app.get("/api/admin/users", auth, authAdmin, async(req,res)=>{
+  const q = await pool.query(
+    "SELECT id,email,full_name,balance FROM users"
+  );
+  res.json(q.rows);
+});
+
+app.get("/api/admin/loans", auth, authAdmin, async (req,res)=>{
   const q = await pool.query(`
     SELECT loans.*, users.full_name, users.email
     FROM loans
@@ -189,8 +148,7 @@ app.get("/api/admin/loans", auth, admin, async (req,res)=>{
   res.json(q.rows);
 });
 
-// Approve / Reject loan
-app.post("/api/admin/loan-status", auth, admin, async (req,res)=>{
+app.post("/api/admin/loan-status", auth, authAdmin, async (req,res)=>{
   const { loan_id, status } = req.body;
 
   if(!["approved","rejected"].includes(status))
@@ -211,46 +169,15 @@ app.post("/api/admin/loan-status", auth, admin, async (req,res)=>{
   res.json(q.rows[0]);
 });
 
-// Get my loans (USER)
-app.get("/api/my-loans", auth, async (req,res)=>{
-  const loans = await db.any(
-    "SELECT * FROM loans WHERE user_id=$1 ORDER BY id DESC",
-    [req.user.id]
+app.post("/api/admin/lock/:id", auth, authAdmin, async(req,res)=>{
+  const { insurance, tax } = req.body;
+  await pool.query(
+    "UPDATE loans SET locked=true, insurance=$1, tax=$2 WHERE id=$3",
+    [insurance,tax,req.params.id]
   );
-  res.json(loans);
+  res.json({success:true});
 });
 
-// Get all loans (ADMIN)
-app.get("/api/admin/loans", authAdmin, async (req,res)=>{
-  const loans = await db.any(`
-    SELECT loans.*, users.full_name, users.email
-    FROM loans
-    JOIN users ON users.id = loans.user_id
-    ORDER BY loans.id DESC
-  `);
-  res.json(loans);
-});
-
-// Approve / Reject loan (ADMIN)
-app.post("/api/admin/loan-status", authAdmin, async (req,res)=>{
-  const { loan_id, status } = req.body;
-
-  if(!["approved","rejected"].includes(status))
-    return res.status(400).json({ error:"Invalid status" });
-
-  const loan = await db.one(
-    "UPDATE loans SET status=$1 WHERE id=$2 RETURNING *",
-    [status, loan_id]
-  );
-
-  // If approved → credit balance
-  if(status==="approved"){
-    await db.none(
-      "UPDATE users SET balance = balance + $1 WHERE id=$2",
-      [loan.amount, loan.user_id]
-    );
-  }
-
-  res.json(loan);
-});
-
+/* ================= START ================= */
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, ()=>console.log("Server running on port", PORT));
