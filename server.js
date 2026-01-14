@@ -105,7 +105,7 @@ app.post("/api/loan", auth, async(req,res)=>{
   res.json({ success:true });
 });
 
-app.get("/api/myloans", auth, async(req,res)=>{
+app.get("/api/my-loans", auth, async (req,res)=>{
   const q = await pool.query("SELECT * FROM loans WHERE user_id=$1",[req.user.id]);
   res.json(q.rows);
 });
@@ -150,23 +150,65 @@ app.post("/api/admin/deposit/:userId", auth, admin, async(req,res)=>{
 /* ================= START ================= */
 app.listen(3000, ()=>console.log("Server running"));
 
-// ================= LOANS =================
+/* ================= LOANS ================= */
 
-// Apply for loan (USER)
+// User applies for loan
 app.post("/api/apply-loan", auth, async (req,res)=>{
   const { amount, duration, loan_type } = req.body;
 
   if(!amount || !duration || !loan_type)
     return res.status(400).json({ error:"Missing fields" });
 
-  const loan = await db.one(
+  const q = await pool.query(
     `INSERT INTO loans (user_id, amount, duration, loan_type, status)
      VALUES ($1,$2,$3,$4,'pending')
      RETURNING *`,
     [req.user.id, amount, duration, loan_type]
   );
 
-  res.json(loan);
+  res.json(q.rows[0]);
+});
+
+// Get my loans (USER)
+app.get("/api/my-loans", auth, async (req,res)=>{
+  const q = await pool.query(
+    "SELECT * FROM loans WHERE user_id=$1 ORDER BY id DESC",
+    [req.user.id]
+  );
+  res.json(q.rows);
+});
+
+// Get all loans (ADMIN)
+app.get("/api/admin/loans", auth, admin, async (req,res)=>{
+  const q = await pool.query(`
+    SELECT loans.*, users.full_name, users.email
+    FROM loans
+    JOIN users ON users.id = loans.user_id
+    ORDER BY loans.id DESC
+  `);
+  res.json(q.rows);
+});
+
+// Approve / Reject loan
+app.post("/api/admin/loan-status", auth, admin, async (req,res)=>{
+  const { loan_id, status } = req.body;
+
+  if(!["approved","rejected"].includes(status))
+    return res.status(400).json({ error:"Invalid status" });
+
+  const q = await pool.query(
+    "UPDATE loans SET status=$1 WHERE id=$2 RETURNING *",
+    [status, loan_id]
+  );
+
+  if(status === "approved"){
+    await pool.query(
+      "UPDATE users SET balance = balance + $1 WHERE id=$2",
+      [q.rows[0].amount, q.rows[0].user_id]
+    );
+  }
+
+  res.json(q.rows[0]);
 });
 
 // Get my loans (USER)
