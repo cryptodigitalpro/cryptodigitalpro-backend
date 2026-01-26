@@ -1,3 +1,12 @@
+
+console.log("ENV CHECK", {
+  DATABASE_URL: !!process.env.DATABASE_URL,
+  JWT_SECRET: !!process.env.JWT_SECRET,
+  JWT_REFRESH_SECRET: !!process.env.JWT_REFRESH_SECRET,
+  JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN,
+  JWT_REFRESH_EXPIRES_IN: process.env.JWT_REFRESH_EXPIRES_IN
+});
+
 // server.js
 import express from "express";
 import cors from "cors";
@@ -38,3 +47,4 @@ initWS(server);
 server.listen(PORT, () => {
   console.log(`🚀 API + WebSocket running on port ${PORT}`);
 });
+
