@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../server.js";
-import { auth, authAdmin } from "../utils/auth.js";
+import { auth, authAdmin } from "../middleware/auth.js";
 import { logAdmin } from "../utils/audit.js";
 import { sendMail } from "../mailer.js";
 import { notifyUser, notifyAdmins } from "../ws.js";
