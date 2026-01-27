@@ -1,7 +1,8 @@
 import express from "express";
 import { pool } from "../server.js";
 import { auth, authAdmin } from "../middleware/auth.js";
-import { logAdmin } from "../utils/adminLog.js";
+import { logAdmin } from "../utils/adminlog.js";
+
 
 const router = express.Router();
 
