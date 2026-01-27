@@ -2,10 +2,6 @@ import express from "express";
 import { pool } from "../server.js";
 import { auth, authAdmin } from "../middleware/auth.js";
 import { logAdmin } from "../utils/adminlog.js";
-<<<<<<< HEAD
-
-=======
->>>>>>> 27c422c (Fix admin routes, transactions, and audit logging)
 
 const router = express.Router();
 
@@ -19,11 +15,12 @@ router.get("/my", auth, async (req, res) => {
      ORDER BY id DESC`,
     [req.user.id]
   );
+
   res.json(q.rows);
 });
 
 /* ================= ADMIN: CREATE TRANSACTION ================= */
-/* Used for manual credits, adjustments, refunds */
+/* Manual credits, debits, adjustments */
 router.post("/admin/add", auth, authAdmin, async (req, res) => {
   const { user_id, amount, type, note } = req.body;
 
@@ -38,7 +35,7 @@ router.post("/admin/add", auth, authAdmin, async (req, res) => {
   /* Insert transaction */
   await pool.query(
     `INSERT INTO transactions(user_id, amount, type, note)
-     VALUES($1,$2,$3,$4)`,
+     VALUES ($1, $2, $3, $4)`,
     [user_id, amount, type, note || ""]
   );
 
