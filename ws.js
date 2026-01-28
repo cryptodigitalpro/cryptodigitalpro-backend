@@ -1,27 +1,27 @@
-import WebSocket from "ws";
+import { WebSocketServer, WebSocket } from "ws";
 
+let wss;
 const clients = new Map();
 
 /* ================= INIT ================= */
 export function initWS(server) {
-  const wss = new WebSocket.Server({ server });
+  wss = new WebSocketServer({ server });
 
-  wss.on("connection", (ws, req) => {
-    // TEMP user identification (can be improved later)
+  wss.on("connection", (ws) => {
     ws.userId = null;
     ws.isAdmin = false;
 
     clients.set(ws, ws);
 
-    ws.on("message", msg => {
+    ws.on("message", (msg) => {
       try {
         const data = JSON.parse(msg.toString());
 
         if (data.type === "identify") {
-          ws.userId = data.userId;
-          ws.isAdmin = !!data.isAdmin;
+          ws.userId = data.userId ?? null;
+          ws.isAdmin = Boolean(data.isAdmin);
         }
-      } catch (e) {}
+      } catch (_) {}
     });
 
     ws.on("close", () => {
@@ -52,9 +52,12 @@ export function notifyAdmins(payload) {
 
 /* ================= BROADCAST ================= */
 export function broadcast(payload) {
-  for (const ws of clients.keys()) {
+  if (!wss) return;
+
+  const msg = JSON.stringify(payload);
+  for (const ws of wss.clients) {
     if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
+      ws.send(msg);
     }
   }
 }
