@@ -1,64 +1,63 @@
-import express from "express";
-import { pool } from "../server.js";
-import { auth } from "../middleware/auth.js";
+import { WebSocketServer, WebSocket } from "ws";
 
-const router = express.Router();
+let wss;
+const clients = new Map();
 
-/* USER – APPLY LOAN */
-router.post("/apply", async (req, res) => {
-  const { user_id, amount, duration, loan_type } = req.body;
+/* ================= INIT ================= */
+export function initWS(server) {
+  wss = new WebSocketServer({ server });
 
-  const q = await pool.query(
-    `INSERT INTO loans (user_id, amount, duration, loan_type)
-     VALUES ($1,$2,$3,$4) RETURNING *`,
-    [user_id, amount, duration, loan_type]
-  );
+  wss.on("connection", (ws) => {
+    ws.userId = null;
+    ws.isAdmin = false;
 
-  broadcast({ type: "notification", message: "New loan application" });
+    clients.set(ws, ws);
 
-  res.json(q.rows[0]);
-});
+    ws.on("message", (msg) => {
+      try {
+        const data = JSON.parse(msg.toString());
 
-/* USER – MY LOANS */
-router.get("/my/:id", async (req, res) => {
-  const q = await pool.query(
-    "SELECT * FROM loans WHERE user_id=$1 ORDER BY id DESC",
-    [req.params.id]
-  );
-  res.json(q.rows);
-});
+        if (data.type === "identify") {
+          ws.userId = data.userId ?? null;
+          ws.isAdmin = Boolean(data.isAdmin);
+        }
+      } catch (_) {}
+    });
 
-export default router;
+    ws.on("close", () => {
+      clients.delete(ws);
+    });
+  });
 
-router.post("/withdraw", auth, async (req, res) => {
-  const { amount } = req.body;
+  console.log("✅ WebSocket server ready");
+}
 
-  const userQ = await pool.query(
-    "SELECT balance FROM users WHERE id=$1",
-    [req.user.id]
-  );
+/* ================= USER NOTIFY ================= */
+export function notifyUser(userId, payload) {
+  for (const ws of clients.keys()) {
+    if (ws.userId === userId && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    }
+  }
+}
 
-  if (userQ.rows[0].balance < amount)
-    return res.status(400).json({ error: "Insufficient balance" });
+/* ================= ADMIN NOTIFY ================= */
+export function notifyAdmins(payload) {
+  for (const ws of clients.keys()) {
+    if (ws.isAdmin && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    }
+  }
+}
 
-  const lockedLoan = await pool.query(
-    "SELECT id FROM loans WHERE user_id=$1 AND locked=true",
-    [req.user.id]
-  );
+/* ================= BROADCAST ================= */
+export function broadcast(payload) {
+  if (!wss) return;
 
-  if (lockedLoan.rows.length)
-    return res.status(403).json({ error: "Withdrawals locked by admin" });
-
-  await pool.query(
-    "UPDATE users SET balance = balance - $1 WHERE id=$2",
-    [amount, req.user.id]
-  );
-
-  await pool.query(
-    `INSERT INTO transactions(user_id, amount, type, note)
-     VALUES($1,$2,'debit','Withdrawal request')`,
-    [req.user.id, amount]
-  );
-
-  res.json({ success: true });
-});
+  const msg = JSON.stringify(payload);
+  for (const ws of wss.clients) {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(msg);
+    }
+  }
+}
