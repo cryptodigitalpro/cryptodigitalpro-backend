@@ -1,6 +1,6 @@
 import express from "express";
 import { pool } from "../server.js";
-import { broadcast } from "../ws.js";
+import { auth } from "../middleware/auth.js";
 
 const router = express.Router();
 
