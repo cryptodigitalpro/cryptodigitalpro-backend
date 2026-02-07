@@ -49,3 +49,12 @@ export async function confirmGasFee(req, res) {
 
   res.json({ success: true });
 }
+
+import { sendEmail } from "../mailer.js";
+import { kycApprovedEmail } from "../mailer/emails/kycApproved.js";
+
+await sendEmail(
+  user.email,
+  "KYC Approved",
+  kycApprovedEmail()
+);
