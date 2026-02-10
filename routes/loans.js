@@ -7,7 +7,19 @@ const router = express.Router();
 
 /* ================= USER – APPLY LOAN ================= */
 router.post("/apply", auth, async (req, res) => {
-  const { amount, duration, loan_type } = req.body;
+  const userQ = await pool.query(
+    "SELECT kyc_status FROM users WHERE id=$1",
+    [req.user.id]
+  );
+
+  if (userQ.rows[0].kyc_status !== "approved") {
+    return res.status(403).json({
+      error: "KYC approval required before loan application"
+    });
+  }
+
+  // create loan here
+});
 
   const q = await pool.query(
     `INSERT INTO loans (user_id, amount, duration, loan_type)
@@ -70,3 +82,4 @@ router.post("/withdraw", auth, async (req, res) => {
 });
 
 export default router;
+

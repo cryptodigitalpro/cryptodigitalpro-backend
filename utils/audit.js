@@ -1,4 +1,20 @@
 import AuditLog from "../models/Auditlog.js";
+import { pool } from "../db.js";
+
+export async function logAudit({
+  actor_id,
+  actor_role,
+  action,
+  target_id,
+  ip
+}) {
+  await pool.query(
+    `INSERT INTO audit_logs
+     (actor_id, actor_role, action, target_id, ip_address)
+     VALUES ($1,$2,$3,$4,$5)`,
+    [actor_id, actor_role, action, target_id, ip]
+  );
+}
 
 export async function logAudit(admin, action, target, meta = {}){
   await AuditLog.create({

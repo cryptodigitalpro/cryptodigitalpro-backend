@@ -1,17 +1,15 @@
 import express from "express";
 import { pool } from "../server.js";
-import { auth, authAdmin } from "../middleware/auth.js";
+import { auth, authAdmin } from "../utils/auth.js";
 import { logAdmin } from "../utils/audit.js";
 import { sendMail } from "../mailer.js";
-import { notifyUser, notifyAdmins } from "../ws.js";
-import { processWithdrawal } from "../controllers/withdraw.controller.js";
 
 const router = express.Router();
 
 /* ================= USERS ================= */
 router.get("/users", auth, authAdmin, async (req, res) => {
   const q = await pool.query(
-    "SELECT id, email, full_name, balance, kyc_status FROM users"
+    "SELECT id, email, full_name, kyc_status FROM users ORDER BY id DESC"
   );
   res.json(q.rows);
 });
@@ -19,7 +17,7 @@ router.get("/users", auth, authAdmin, async (req, res) => {
 /* ================= LOANS ================= */
 router.get("/loans", auth, authAdmin, async (req, res) => {
   const q = await pool.query(`
-    SELECT loans.*, users.full_name, users.email
+    SELECT loans.*, users.email, users.full_name
     FROM loans
     JOIN users ON users.id = loans.user_id
     ORDER BY loans.id DESC
@@ -27,159 +25,93 @@ router.get("/loans", auth, authAdmin, async (req, res) => {
   res.json(q.rows);
 });
 
-/* ===== APPROVE / REJECT LOAN ===== */
-router.post("/loan-status", auth, authAdmin, async (req, res) => {
-  const { loan_id, status } = req.body;
+/* ================= APPROVE / REJECT LOAN ================= */
+router.post("/loans/:id/status", auth, authAdmin, async (req, res) => {
+  const { status, reason } = req.body;
 
   if (!["approved", "rejected"].includes(status)) {
     return res.status(400).json({ error: "Invalid status" });
   }
 
-  const q = await pool.query(
-    "UPDATE loans SET status=$1 WHERE id=$2 RETURNING *",
-    [status, loan_id]
+  const loanQ = await pool.query(
+    `SELECT loans.*, users.kyc_status, users.email
+     FROM loans
+     JOIN users ON users.id = loans.user_id
+     WHERE loans.id = $1`,
+    [req.params.id]
   );
 
-  const loan = q.rows[0];
-  if (!loan) return res.status(404).json({ error: "Loan not found" });
+  const loan = loanQ.rows[0];
+  if (!loan) {
+    return res.status(404).json({ error: "Loan not found" });
+  }
 
-  if (status === "approved") {
-    await pool.query(
-      "UPDATE users SET balance = balance + $1 WHERE id=$2",
-      [loan.amount, loan.user_id]
-    );
-
-    const user = await pool.query(
-      "SELECT email FROM users WHERE id=$1",
-      [loan.user_id]
-    );
-
-    await sendMail(
-      user.rows[0].email,
-      "Loan Approved",
-      `Your loan of $${loan.amount} has been approved.`
-    );
-
-    notifyUser(loan.user_id, {
-      type: "notification",
-      message: `Your loan of $${loan.amount} has been approved`
+  // 🔒 KYC CHECK
+  if (status === "approved" && loan.kyc_status !== "approved") {
+    return res.status(400).json({
+      error: "User KYC not approved"
     });
   }
 
-  await logAdmin(req.user.id, `Loan ${status} #${loan_id}`);
-  notifyAdmins({ type: "notification", message: `Loan #${loan_id} ${status}` });
+  const client = await pool.connect();
 
-  res.json(loan);
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      "UPDATE loans SET status=$1, rejection_reason=$2 WHERE id=$3",
+      [status, reason || null, req.params.id]
+    );
+
+    if (status === "approved") {
+      await client.query(
+        "UPDATE users SET balance = balance + $1 WHERE id=$2",
+        [loan.amount, loan.user_id]
+      );
+    }
+
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    console.error(err);
+    return res.status(500).json({ error: "Loan update failed" });
+  } finally {
+    client.release();
+  }
+
+  // 📧 EMAIL NOTIFICATION
+  await sendMail(
+    loan.email,
+    status === "approved" ? "Loan Approved" : "Loan Rejected",
+    status === "approved"
+      ? `<p>Your loan of <b>$${loan.amount}</b> has been approved.</p>`
+      : `<p>Your loan was rejected.<br/>Reason: ${reason || "Not specified"}</p>`
+  );
+
+  await logAdmin(req.user.id, `Loan ${status} #${loan.id}`);
+
+  res.json({ success: true });
 });
 
-/* ================= KYC ================= */
-router.post("/kyc/:id", auth, authAdmin, async (req, res) => {
+/* ================= KYC APPROVAL ================= */
+router.post("/kyc/:userId", auth, authAdmin, async (req, res) => {
   const { status } = req.body;
+
+  if (!["approved", "rejected", "pending"].includes(status)) {
+    return res.status(400).json({ error: "Invalid KYC status" });
+  }
 
   await pool.query(
     "UPDATE users SET kyc_status=$1 WHERE id=$2",
-    [status, req.params.id]
+    [status, req.params.userId]
   );
 
-  await logAdmin(req.user.id, `KYC ${status} for user #${req.params.id}`);
-
-  notifyUser(req.params.id, {
-    type: "notification",
-    message: `Your KYC status is now ${status}`
-  });
+  await logAdmin(req.user.id, `KYC ${status} for user ${req.params.userId}`);
 
   res.json({ success: true });
 });
 
-/* ================= WITHDRAWALS ================= */
-router.get("/withdrawals", auth, authAdmin, async (req, res) => {
-  const q = await pool.query(`
-    SELECT w.*, u.email AS user_email
-    FROM withdrawals w
-    JOIN users u ON u.id = w.user_id
-    ORDER BY w.created_at DESC
-  `);
-  res.json(q.rows);
-});
-
-/* ===== APPROVE WITHDRAW ===== */
-router.post("/withdraw/approve", auth, authAdmin, async (req, res) => {
-  const { id } = req.body;
-
-  const q = await pool.query(`
-    UPDATE withdrawals
-    SET admin_verified=true, status='processing'
-    WHERE id=$1 RETURNING *
-  `, [id]);
-
-  const withdraw = q.rows[0];
-  if (!withdraw) return res.status(404).json({ error: "Not found" });
-
-  await processWithdrawal(withdraw);
-  await logAdmin(req.user.id, `Approved withdrawal #${id}`);
-
-  notifyUser(withdraw.user_id, {
-    type: "withdraw",
-    progress: withdraw.progress,
-    message: "Withdrawal approved by admin"
-  });
-
-  res.json({ success: true });
-});
-
-/* ===== REJECT WITHDRAW ===== */
-router.post("/withdraw/reject", auth, authAdmin, async (req, res) => {
-  const { id } = req.body;
-
-  const q = await pool.query(`
-    UPDATE withdrawals
-    SET status='rejected'
-    WHERE id=$1 RETURNING *
-  `, [id]);
-
-  const withdraw = q.rows[0];
-  if (!withdraw) return res.status(404).json({ error: "Not found" });
-
-  await logAdmin(req.user.id, `Rejected withdrawal #${id}`);
-
-  notifyUser(withdraw.user_id, {
-    type: "withdraw",
-    progress: withdraw.progress,
-    message: "Your withdrawal was rejected"
-  });
-
-  res.json({ success: true });
-});
-
-/* ===== CONFIRM GAS FEE ===== */
-router.post("/withdraw/confirm-fee", auth, authAdmin, async (req, res) => {
-  const { id } = req.body;
-
-  const q = await pool.query(`
-    UPDATE withdrawals
-    SET fee_paid=true, status='processing'
-    WHERE id=$1 RETURNING *
-  `, [id]);
-
-  await processWithdrawal(q.rows[0]);
-  res.json({ success: true });
-});
-
-/* ===== VERIFY ===== */
-router.post("/withdraw/verify", auth, authAdmin, async (req, res) => {
-  const { id } = req.body;
-
-  const q = await pool.query(`
-    UPDATE withdrawals
-    SET admin_verified=true, status='processing'
-    WHERE id=$1 RETURNING *
-  `, [id]);
-
-  await processWithdrawal(q.rows[0]);
-  res.json({ success: true });
-});
-
-/* ================= LOGS ================= */
+/* ================= ADMIN LOGS ================= */
 router.get("/logs", auth, authAdmin, async (req, res) => {
   const q = await pool.query(`
     SELECT admin_logs.*, users.email
@@ -192,16 +124,14 @@ router.get("/logs", auth, authAdmin, async (req, res) => {
 
 /* ================= ANALYTICS ================= */
 router.get("/analytics", auth, authAdmin, async (req, res) => {
-  const users = await pool.query("SELECT COUNT(*) FROM users");
   const loans = await pool.query("SELECT COUNT(*) FROM loans");
-  const pending = await pool.query("SELECT COUNT(*) FROM loans WHERE status='pending'");
-  const volume = await pool.query("SELECT SUM(amount) FROM loans WHERE status='approved'");
+  const pending = await pool.query(
+    "SELECT COUNT(*) FROM loans WHERE status='pending'"
+  );
 
   res.json({
-    totalUsers: Number(users.rows[0].count),
     totalLoans: Number(loans.rows[0].count),
-    pendingLoans: Number(pending.rows[0].count),
-    totalVolume: volume.rows[0].sum || 0
+    pendingLoans: Number(pending.rows[0].count)
   });
 });
 

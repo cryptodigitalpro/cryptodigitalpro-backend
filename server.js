@@ -22,6 +22,13 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.use(cors({
+  origin: [
+    "https://cryptodigitalpro.netlify.app",
+    "https://cryptodigitalpro.com"
+  ],
+  credentials: true
+}));
 /* ================= ENV CHECK ================= */
 console.log("ENV CHECK", {
   DATABASE_URL: !!process.env.DATABASE_URL,
@@ -45,3 +52,4 @@ initWS(server);
 server.listen(PORT, () => {
   console.log(`🚀 API + WebSocket running on port ${PORT}`);
 });
+
