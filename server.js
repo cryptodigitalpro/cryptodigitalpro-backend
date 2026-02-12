@@ -24,19 +24,13 @@ const server = http.createServer(app);
    CONFIG
 ===================================== */
 
-const PORT = process.env.PORT || 5000;
+const cors = require("cors");
 
-app.use(express.json({ limit: "10mb" }));
+app.use(cors({
+  origin: "https://cryptodigitalpro.com",
+  credentials: true
+}));
 
-app.use(
-  cors({
-    origin: [
-      "http://localhost:3000",
-      "https://your-netlify-site.netlify.app"
-    ],
-    credentials: true
-  })
-);
 
 /* =====================================
    SOCKET.IO
