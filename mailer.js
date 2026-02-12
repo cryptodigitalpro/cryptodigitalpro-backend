@@ -1,16 +1,18 @@
 import nodemailer from "nodemailer";
 
-export const mailer = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS
-  }
-});
+export async function sendEmail(to, subject, html) {
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: 587,
+    secure: false,
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS
+    }
+  });
 
-export function sendMail(to, subject, html){
-  return mailer.sendMail({
-    from: `"CryptoDigitalPro" <${process.env.MAIL_USER}>`,
+  await transporter.sendMail({
+    from: `"CryptoDigitalPro" <${process.env.SMTP_USER}>`,
     to,
     subject,
     html

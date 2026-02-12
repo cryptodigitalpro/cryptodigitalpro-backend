@@ -1,0 +1,256 @@
+import express from "express";
+import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import pool from "../db.js"; // your postgres connection
+import crypto from "crypto";
+import nodemailer from "nodemailer";
+
+const router = express.Router();
+
+/* ================= REGISTER ================= */
+router.post("/register", async (req, res) => {
+  try {
+    const { full_name, email, password } = req.body;
+
+    if (!full_name || !email || !password)
+      return res.status(400).json({ error: "All fields required" });
+
+    const existing = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (existing.rows.length > 0)
+      return res.status(400).json({ error: "Email already registered" });
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const result = await pool.query(
+      "INSERT INTO users (full_name, email, password, role) VALUES ($1,$2,$3,$4) RETURNING id, role",
+      [full_name, email, hashed, "user"]
+    );
+
+    const token = jwt.sign(
+      { id: result.rows[0].id, role: result.rows[0].role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({ token, is_admin: false });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+/* ================= LOGIN ================= */
+import speakeasy from "speakeasy";
+import QRCode from "qrcode";
+
+router.post("/login", async (req, res) => {
+  try {
+    const { email, password, twofa_code } = req.body;
+
+    const result = await pool.query(
+      "SELECT * FROM users WHERE email=$1",
+      [email]
+    );
+
+    if (result.rows.length === 0)
+      return res.status(400).json({ error: "Invalid credentials" });
+
+    const user = result.rows[0];
+
+    const valid = await bcrypt.compare(password, user.password);
+    if (!valid)
+      return res.status(400).json({ error: "Invalid credentials" });
+
+    /* ================= ADMIN 2FA LOGIC ================= */
+
+    if (user.role === "admin") {
+
+      // If 2FA not setup
+      if (!user.twofa_enabled) {
+
+        const secret = speakeasy.generateSecret({
+          name: `CryptoDigitalPro Admin (${user.email})`
+        });
+
+        await pool.query(
+          "UPDATE users SET twofa_secret=$1 WHERE id=$2",
+          [secret.base32, user.id]
+        );
+
+        const qr = await QRCode.toDataURL(secret.otpauth_url);
+
+        return res.json({
+          require_2fa_setup: true,
+          qr,
+          manual_code: secret.base32
+        });
+      }
+
+      // If 2FA enabled but no code provided
+      if (!twofa_code) {
+        return res.json({
+          require_2fa: true
+        });
+      }
+
+      const verified = speakeasy.totp.verify({
+        secret: user.twofa_secret,
+        encoding: "base32",
+        token: twofa_code,
+        window: 1
+      });
+
+      if (!verified) {
+        return res.status(400).json({ error: "Invalid 2FA code" });
+      }
+    }
+
+    /* ================= ISSUE TOKEN ================= */
+
+    const token = jwt.sign(
+      { id: user.id, role: user.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "2h" } // shorter for admin security
+    );
+
+    res.json({
+      token,
+      is_admin: user.role === "admin"
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/enable-2fa", async (req, res) => {
+  const { email, code } = req.body;
+
+  const userQ = await pool.query(
+    "SELECT * FROM users WHERE email=$1",
+    [email]
+  );
+
+  const user = userQ.rows[0];
+  if (!user) return res.status(400).json({ error: "User not found" });
+
+  const verified = speakeasy.totp.verify({
+    secret: user.twofa_secret,
+    encoding: "base32",
+    token: code
+  });
+
+  if (!verified)
+    return res.status(400).json({ error: "Invalid code" });
+
+  await pool.query(
+    "UPDATE users SET twofa_enabled=true WHERE id=$1",
+    [user.id]
+  );
+
+  res.json({ success: true });
+});
+
+/* ================= FORGOT PASSWORD ================= */
+router.post("/forgot-password", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const result = await pool.query(
+      "SELECT id FROM users WHERE email = $1",
+      [email]
+    );
+
+    if (result.rows.length === 0)
+      return res.json({ message: "If account exists, reset link sent" });
+
+    const user = result.rows[0];
+
+    const resetToken = crypto.randomBytes(32).toString("hex");
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(resetToken)
+      .digest("hex");
+
+    const expiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+
+    await pool.query(
+      "UPDATE users SET reset_token=$1, reset_token_expiry=$2 WHERE id=$3",
+      [hashedToken, expiry, user.id]
+    );
+
+    const resetURL = `https://cryptodigitalpro.netlify.app/reset-password.html?token=${resetToken}`;
+
+    // EMAIL CONFIG (Use your SMTP credentials)
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      secure: false,
+      auth: {
+        user: process.env.SMTP_USER,
+        pass: process.env.SMTP_PASS
+      }
+    });
+
+    await transporter.sendMail({
+      to: email,
+      subject: "Password Reset",
+      html: `
+        <h3>Password Reset</h3>
+        <p>Click link below to reset password:</p>
+        <a href="${resetURL}">${resetURL}</a>
+        <p>This link expires in 15 minutes.</p>
+      `
+    });
+
+    res.json({ message: "If account exists, reset link sent" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});
+
+router.post("/reset-password", async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    const result = await pool.query(
+      `SELECT id FROM users
+       WHERE reset_token=$1
+       AND reset_token_expiry > NOW()`,
+      [hashedToken]
+    );
+
+    if (result.rows.length === 0)
+      return res.status(400).json({ error: "Invalid or expired token" });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+
+    await pool.query(
+      `UPDATE users
+       SET password=$1,
+           reset_token=NULL,
+           reset_token_expiry=NULL
+       WHERE id=$2`,
+      [hashedPassword, result.rows[0].id]
+    );
+
+    res.json({ message: "Password updated successfully" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
+  }
+});

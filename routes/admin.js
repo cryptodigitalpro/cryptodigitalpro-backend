@@ -1,21 +1,36 @@
 import express from "express";
-import { pool } from "../server.js";
-import { auth, authAdmin } from "../utils/auth.js";
+import { pool } from "../db.js";
+import { auth, authAdmin } from "../middleware/auth.js";
 import { logAdmin } from "../utils/audit.js";
 import { sendMail } from "../mailer.js";
 
 const router = express.Router();
 
-/* ================= USERS ================= */
-router.get("/users", auth, authAdmin, async (req, res) => {
-  const q = await pool.query(
-    "SELECT id, email, full_name, kyc_status FROM users ORDER BY id DESC"
-  );
-  res.json(q.rows);
+/* ================= APPLY GLOBAL ADMIN PROTECTION ================= */
+router.use(auth);
+router.use(authAdmin);
+
+/* ================= DASHBOARD ================= */
+router.get("/dashboard", async (req, res) => {
+  res.json({ message: "Admin dashboard access granted" });
 });
 
+/* ================= USERS ================= */
+router.get("/users", async (req, res) => {
+  try {
+    const q = await pool.query(
+      "SELECT id, email, full_name, kyc_status FROM users ORDER BY id DESC"
+    );
+    res.json(q.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+
 /* ================= LOANS ================= */
-router.get("/loans", auth, authAdmin, async (req, res) => {
+router.get("/loans", async (req, res) => {
   const q = await pool.query(`
     SELECT loans.*, users.email, users.full_name
     FROM loans
@@ -26,7 +41,7 @@ router.get("/loans", auth, authAdmin, async (req, res) => {
 });
 
 /* ================= APPROVE / REJECT LOAN ================= */
-router.post("/loans/:id/status", auth, authAdmin, async (req, res) => {
+router.post("/loans/:id/status", async (req, res) => {
   const { status, reason } = req.body;
 
   if (!["approved", "rejected"].includes(status)) {
@@ -34,24 +49,22 @@ router.post("/loans/:id/status", auth, authAdmin, async (req, res) => {
   }
 
   const loanQ = await pool.query(
-    `SELECT loans.*, users.kyc_status, users.email
-     FROM loans
-     JOIN users ON users.id = loans.user_id
-     WHERE loans.id = $1`,
-    [req.params.id]
-  );
+  `SELECT loans.*, users.kyc_status, users.email
+   FROM loans
+   JOIN users ON users.id = loans.user_id
+   WHERE loans.id = $1`,
+  [req.params.id]
+);
 
-  const loan = loanQ.rows[0];
-  if (!loan) {
-    return res.status(404).json({ error: "Loan not found" });
-  }
+const loan = loanQ.rows[0];
 
-  // 🔒 KYC CHECK
-  if (status === "approved" && loan.kyc_status !== "approved") {
-    return res.status(400).json({
-      error: "User KYC not approved"
-    });
-  }
+if (!loan) {
+  return res.status(404).json({ error: "Loan not found" });
+}
+
+if (loan.status !== "pending") {
+  return res.status(400).json({ error: "Loan already processed" });
+}
 
   const client = await pool.connect();
 
@@ -79,7 +92,6 @@ router.post("/loans/:id/status", auth, authAdmin, async (req, res) => {
     client.release();
   }
 
-  // 📧 EMAIL NOTIFICATION
   await sendMail(
     loan.email,
     status === "approved" ? "Loan Approved" : "Loan Rejected",
@@ -94,7 +106,7 @@ router.post("/loans/:id/status", auth, authAdmin, async (req, res) => {
 });
 
 /* ================= KYC APPROVAL ================= */
-router.post("/kyc/:userId", auth, authAdmin, async (req, res) => {
+router.post("/kyc/:userId", async (req, res) => {
   const { status } = req.body;
 
   if (!["approved", "rejected", "pending"].includes(status)) {
@@ -112,7 +124,7 @@ router.post("/kyc/:userId", auth, authAdmin, async (req, res) => {
 });
 
 /* ================= ADMIN LOGS ================= */
-router.get("/logs", auth, authAdmin, async (req, res) => {
+router.get("/logs", async (req, res) => {
   const q = await pool.query(`
     SELECT admin_logs.*, users.email
     FROM admin_logs
@@ -123,7 +135,7 @@ router.get("/logs", auth, authAdmin, async (req, res) => {
 });
 
 /* ================= ANALYTICS ================= */
-router.get("/analytics", auth, authAdmin, async (req, res) => {
+router.get("/analytics", async (req, res) => {
   const loans = await pool.query("SELECT COUNT(*) FROM loans");
   const pending = await pool.query(
     "SELECT COUNT(*) FROM loans WHERE status='pending'"
