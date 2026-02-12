@@ -1,30 +1,21 @@
-/* =====================================
-   USER MODEL
-===================================== */
-
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema(
   {
-    fullName: {
+    name: {
       type: String,
-      required: true,
-      trim: true
+      required: true
     },
 
     email: {
       type: String,
       required: true,
-      unique: true,
-      lowercase: true,
-      trim: true
+      unique: true
     },
 
     password: {
       type: String,
-      required: true,
-      minlength: 6
+      required: true
     },
 
     role: {
@@ -39,39 +30,17 @@ const userSchema = new mongoose.Schema(
       default: "pending"
     },
 
-    balance: {
-      type: Number,
-      default: 0
-    }
+    reset_token: {
+      type: String
+    },
 
+    reset_token_expiry: {
+      type: Date
+    }
   },
   {
     timestamps: true
   }
 );
 
-/* =====================================
-   HASH PASSWORD BEFORE SAVE
-===================================== */
-
-userSchema.pre("save", async function (next) {
-  if (!this.isModified("password")) return next();
-
-  const salt = await bcrypt.genSalt(10);
-  this.password = await bcrypt.hash(this.password, salt);
-
-  next();
-});
-
-/* =====================================
-   PASSWORD COMPARE METHOD
-===================================== */
-
-userSchema.methods.comparePassword = function (enteredPassword) {
-  return bcrypt.compare(enteredPassword, this.password);
-};
-
 module.exports = mongoose.model("User", userSchema);
-
-reset_token: String,
-reset_token_expiry: Date
