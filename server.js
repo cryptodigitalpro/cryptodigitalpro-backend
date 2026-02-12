@@ -13,9 +13,9 @@ const { Server } = require("socket.io");
 const authMiddleware = require("./middleware/auth");
 const adminMiddleware = require("./middleware/admin");
 
-const User = require("./models/User");
-const Loan = require("./models/Loan");
-const Notification = require("./models/Notification");
+const User = require("./models/user");
+const Loan = require("./models/loan");
+const Notification = require("./models/notification");
 
 const app = express();
 const server = http.createServer(app);
@@ -73,7 +73,7 @@ mongoose
 ===================================== */
 
 app.get("/", (req, res) => {
-  res.json({ status: "API running" });
+  res.json({ status: "API running 🚀" });
 });
 
 /* =====================================
@@ -115,7 +115,7 @@ app.post("/api/loans/apply", authMiddleware, async (req, res) => {
     });
 
   } catch (err) {
-    console.error(err);
+    console.error("Apply Loan Error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -131,17 +131,16 @@ app.patch(
   async (req, res) => {
     try {
       const { action, reason } = req.body;
-      const loan = await Loan.findById(req.params.id).populate("user");
 
+      const loan = await Loan.findById(req.params.id).populate("user");
       if (!loan) return res.status(404).json({ error: "Loan not found" });
 
       if (action === "approve") {
         loan.status = "approved";
         loan.remaining_balance = loan.amount;
-
         await loan.save();
 
-        const notification = await Notification.create({
+        const newNotification = await Notification.create({
           user: loan.user._id,
           title: "Loan Approved",
           message: "Your loan has been approved successfully.",
@@ -150,13 +149,12 @@ app.patch(
 
         io.to(loan.user._id.toString()).emit(
           "new_notification",
-          notification
+          newNotification
         );
 
       } else if (action === "reject") {
         loan.status = "rejected";
         loan.rejection_reason = reason || "No reason provided";
-
         await loan.save();
 
       } else {
@@ -166,7 +164,7 @@ app.patch(
       res.json({ message: `Loan ${action}d successfully`, loan });
 
     } catch (err) {
-      console.error(err);
+      console.error("Admin Loan Action Error:", err);
       res.status(500).json({ error: "Server error" });
     }
   }
@@ -183,6 +181,7 @@ app.get("/api/loans/my", authMiddleware, async (req, res) => {
 
     res.json(loans);
   } catch (err) {
+    console.error("Get Loans Error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -194,8 +193,8 @@ app.get("/api/loans/my", authMiddleware, async (req, res) => {
 app.post("/api/loans/:id/repay", authMiddleware, async (req, res) => {
   try {
     const { amount } = req.body;
-    const loan = await Loan.findById(req.params.id);
 
+    const loan = await Loan.findById(req.params.id);
     if (!loan) return res.status(404).json({ error: "Loan not found" });
 
     if (loan.user.toString() !== req.user.id)
@@ -219,6 +218,7 @@ app.post("/api/loans/:id/repay", authMiddleware, async (req, res) => {
     res.json({ message: "Repayment successful", loan });
 
   } catch (err) {
+    console.error("Repay Loan Error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
@@ -235,6 +235,7 @@ app.get("/api/notifications", authMiddleware, async (req, res) => {
 
     res.json(notifications);
   } catch (err) {
+    console.error("Notifications Error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
