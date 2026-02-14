@@ -1,9 +1,11 @@
-import express from "express";
-import bcrypt from "bcryptjs";
-import jwt from "jsonwebtoken";
-import pool from "../db.js"; // your postgres connection
-import crypto from "crypto";
-import nodemailer from "nodemailer";
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const pool = require("../db"); // postgres connection
+const crypto = require("crypto");
+const nodemailer = require("nodemailer");
+const speakeasy = require("speakeasy");
+const QRCode = require("qrcode");
 
 const router = express.Router();
 
@@ -45,9 +47,6 @@ router.post("/register", async (req, res) => {
 });
 
 /* ================= LOGIN ================= */
-import speakeasy from "speakeasy";
-import QRCode from "qrcode";
-
 router.post("/login", async (req, res) => {
   try {
     const { email, password, twofa_code } = req.body;
@@ -66,11 +65,9 @@ router.post("/login", async (req, res) => {
     if (!valid)
       return res.status(400).json({ error: "Invalid credentials" });
 
-    /* ================= ADMIN 2FA LOGIC ================= */
-
+    /* ADMIN 2FA */
     if (user.role === "admin") {
 
-      // If 2FA not setup
       if (!user.twofa_enabled) {
 
         const secret = speakeasy.generateSecret({
@@ -91,11 +88,8 @@ router.post("/login", async (req, res) => {
         });
       }
 
-      // If 2FA enabled but no code provided
       if (!twofa_code) {
-        return res.json({
-          require_2fa: true
-        });
+        return res.json({ require_2fa: true });
       }
 
       const verified = speakeasy.totp.verify({
@@ -105,17 +99,14 @@ router.post("/login", async (req, res) => {
         window: 1
       });
 
-      if (!verified) {
+      if (!verified)
         return res.status(400).json({ error: "Invalid 2FA code" });
-      }
     }
-
-    /* ================= ISSUE TOKEN ================= */
 
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "2h" } // shorter for admin security
+      { expiresIn: "2h" }
     );
 
     res.json({
@@ -127,34 +118,6 @@ router.post("/login", async (req, res) => {
     console.error(err);
     res.status(500).json({ error: "Server error" });
   }
-});
-
-router.post("/enable-2fa", async (req, res) => {
-  const { email, code } = req.body;
-
-  const userQ = await pool.query(
-    "SELECT * FROM users WHERE email=$1",
-    [email]
-  );
-
-  const user = userQ.rows[0];
-  if (!user) return res.status(400).json({ error: "User not found" });
-
-  const verified = speakeasy.totp.verify({
-    secret: user.twofa_secret,
-    encoding: "base32",
-    token: code
-  });
-
-  if (!verified)
-    return res.status(400).json({ error: "Invalid code" });
-
-  await pool.query(
-    "UPDATE users SET twofa_enabled=true WHERE id=$1",
-    [user.id]
-  );
-
-  res.json({ success: true });
 });
 
 /* ================= FORGOT PASSWORD ================= */
@@ -173,21 +136,20 @@ router.post("/forgot-password", async (req, res) => {
     const user = result.rows[0];
 
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const hashedToken = crypto
-      .createHash("sha256")
+    const hashedToken = crypto.createHash("sha256")
       .update(resetToken)
       .digest("hex");
 
-    const expiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes
+    const expiry = new Date(Date.now() + 15 * 60 * 1000);
 
     await pool.query(
       "UPDATE users SET reset_token=$1, reset_token_expiry=$2 WHERE id=$3",
       [hashedToken, expiry, user.id]
     );
 
-    const resetURL = `https://cryptodigitalpro.netlify.app/reset-password.html?token=${resetToken}`;
+    const resetURL =
+      `https://cryptodigitalpro.com/reset-password.html?token=${resetToken}`;
 
-    // EMAIL CONFIG (Use your SMTP credentials)
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
       port: process.env.SMTP_PORT,
@@ -217,12 +179,12 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
+/* ================= RESET PASSWORD ================= */
 router.post("/reset-password", async (req, res) => {
   try {
     const { token, newPassword } = req.body;
 
-    const hashedToken = crypto
-      .createHash("sha256")
+    const hashedToken = crypto.createHash("sha256")
       .update(token)
       .digest("hex");
 
@@ -254,3 +216,5 @@ router.post("/reset-password", async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
+module.exports = router;
