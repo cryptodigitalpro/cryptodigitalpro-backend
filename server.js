@@ -1,9 +1,10 @@
 /* =====================================
    CRYPTO DIGITAL PRO BACKEND SERVER
-   Production Ready
+   Production Ready (Render Safe)
 ===================================== */
 
 require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
@@ -21,16 +22,24 @@ const app = express();
 const server = http.createServer(app);
 
 /* =====================================
-   CONFIG
+   PORT (VERY IMPORTANT FOR RENDER)
+===================================== */
+const PORT = process.env.PORT || 5000;
+
+/* =====================================
+   MIDDLEWARE
 ===================================== */
 
-const cors = require("cors");
+// Parse JSON
+app.use(express.json());
 
-app.use(cors({
-  origin: "https://cryptodigitalpro.com",
-  credentials: true
-}));
-
+// CORS (Allow your frontend)
+app.use(
+  cors({
+    origin: "https://cryptodigitalpro.com",
+    credentials: true,
+  })
+);
 
 /* =====================================
    SOCKET.IO
@@ -38,8 +47,8 @@ app.use(cors({
 
 const io = new Server(server, {
   cors: {
-    origin: "*"
-  }
+    origin: "*",
+  },
 });
 
 io.on("connection", (socket) => {
@@ -77,12 +86,11 @@ app.get("/", (req, res) => {
 app.post("/api/loans/apply", authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
-
     if (!user) return res.status(404).json({ error: "User not found" });
 
     if (user.kyc_status !== "approved") {
       return res.status(403).json({
-        error: "KYC approval required before loan application"
+        error: "KYC approval required before loan application",
       });
     }
 
@@ -100,14 +108,13 @@ app.post("/api/loans/apply", authMiddleware, async (req, res) => {
       purpose,
       metadata,
       status: "pending",
-      remaining_balance: 0
+      remaining_balance: 0,
     });
 
     res.status(201).json({
       message: "Loan application submitted",
-      loan: newLoan
+      loan: newLoan,
     });
-
   } catch (err) {
     console.error("Apply Loan Error:", err);
     res.status(500).json({ error: "Server error" });
@@ -138,25 +145,22 @@ app.patch(
           user: loan.user._id,
           title: "Loan Approved",
           message: "Your loan has been approved successfully.",
-          type: "loan"
+          type: "loan",
         });
 
         io.to(loan.user._id.toString()).emit(
           "new_notification",
           newNotification
         );
-
       } else if (action === "reject") {
         loan.status = "rejected";
         loan.rejection_reason = reason || "No reason provided";
         await loan.save();
-
       } else {
         return res.status(400).json({ error: "Invalid action" });
       }
 
       res.json({ message: `Loan ${action}d successfully`, loan });
-
     } catch (err) {
       console.error("Admin Loan Action Error:", err);
       res.status(500).json({ error: "Server error" });
@@ -170,8 +174,9 @@ app.patch(
 
 app.get("/api/loans/my", authMiddleware, async (req, res) => {
   try {
-    const loans = await Loan.find({ user: req.user.id })
-      .sort({ createdAt: -1 });
+    const loans = await Loan.find({ user: req.user.id }).sort({
+      createdAt: -1,
+    });
 
     res.json(loans);
   } catch (err) {
@@ -210,7 +215,6 @@ app.post("/api/loans/:id/repay", authMiddleware, async (req, res) => {
     await loan.save();
 
     res.json({ message: "Repayment successful", loan });
-
   } catch (err) {
     console.error("Repay Loan Error:", err);
     res.status(500).json({ error: "Server error" });
@@ -224,7 +228,7 @@ app.post("/api/loans/:id/repay", authMiddleware, async (req, res) => {
 app.get("/api/notifications", authMiddleware, async (req, res) => {
   try {
     const notifications = await Notification.find({
-      user: req.user.id
+      user: req.user.id,
     }).sort({ createdAt: -1 });
 
     res.json(notifications);
