@@ -3,12 +3,11 @@ import { notifyUser, notifyAdmins } from "../ws.js";
 
 /**
  * PROCESS WITHDRAWAL PROGRESS
- * Admin-controlled, deterministic flow
+ * Deterministic + Ledger Safe
  */
 export async function processWithdrawal(withdraw) {
   if (!withdraw || withdraw.status !== "processing") return;
 
-  // deterministic increment
   const progress = Math.min((withdraw.progress || 0) + 10, 100);
 
   /* ================= 47% — GAS FEE REQUIRED ================= */
@@ -49,12 +48,11 @@ export async function processWithdrawal(withdraw) {
     return;
   }
 
-  /* ================= 100% — COMPLETE (LEDGER DEBIT) ================= */
+  /* ================= 100% — COMPLETE ================= */
   if (progress >= 100 && withdraw.admin_verified) {
     try {
       await db.query("BEGIN");
 
-      // lock withdrawal row (prevents double processing)
       const w = await db.query(
         `SELECT * FROM withdrawals
          WHERE id = $1 AND status != 'completed'
@@ -67,7 +65,17 @@ export async function processWithdrawal(withdraw) {
         return;
       }
 
-      // mark withdrawal completed
+      // 🔒 KYC CHECK
+      const user = await db.query(
+        `SELECT kyc_status FROM users WHERE id=$1`,
+        [withdraw.user_id]
+      );
+
+      if (user.rows[0].kyc_status !== "approved") {
+        await db.query("ROLLBACK");
+        return;
+      }
+
       await db.query(
         `UPDATE withdrawals
          SET progress = 100, status = 'completed'
@@ -75,7 +83,7 @@ export async function processWithdrawal(withdraw) {
         [withdraw.id]
       );
 
-      // ledger debit (SOURCE OF TRUTH)
+      // 💰 Ledger debit
       await db.query(
         `INSERT INTO balance_ledger
          (user_id, amount, type, reference_id, admin_id, note)
@@ -106,7 +114,7 @@ export async function processWithdrawal(withdraw) {
     }
   }
 
-  /* ================= NORMAL PROGRESS UPDATE ================= */
+  /* ================= NORMAL PROGRESS ================= */
   await db.query(
     `UPDATE withdrawals
      SET progress = $1

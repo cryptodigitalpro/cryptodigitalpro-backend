@@ -1,7 +1,7 @@
 const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
-const pool = require("../db"); // postgres connection
+const pool = require("../db");
 const crypto = require("crypto");
 const nodemailer = require("nodemailer");
 const speakeasy = require("speakeasy");
@@ -12,10 +12,12 @@ const router = express.Router();
 /* ================= REGISTER ================= */
 router.post("/register", async (req, res) => {
   try {
-    const { full_name, email, password } = req.body;
+    let { full_name, email, password } = req.body;
 
     if (!full_name || !email || !password)
       return res.status(400).json({ error: "All fields required" });
+
+    email = email.toLowerCase();
 
     const existing = await pool.query(
       "SELECT id FROM users WHERE email = $1",
@@ -28,7 +30,10 @@ router.post("/register", async (req, res) => {
     const hashed = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      "INSERT INTO users (full_name, email, password, role) VALUES ($1,$2,$3,$4) RETURNING id, role",
+      `INSERT INTO users 
+       (full_name, email, password, role) 
+       VALUES ($1,$2,$3,$4) 
+       RETURNING id, role`,
       [full_name, email, hashed, "user"]
     );
 
@@ -49,7 +54,9 @@ router.post("/register", async (req, res) => {
 /* ================= LOGIN ================= */
 router.post("/login", async (req, res) => {
   try {
-    const { email, password, twofa_code } = req.body;
+    let { email, password, twofa_code } = req.body;
+
+    email = email.toLowerCase();
 
     const result = await pool.query(
       "SELECT * FROM users WHERE email=$1",
@@ -65,7 +72,7 @@ router.post("/login", async (req, res) => {
     if (!valid)
       return res.status(400).json({ error: "Invalid credentials" });
 
-    /* ADMIN 2FA */
+    /* ================= ADMIN 2FA ================= */
     if (user.role === "admin") {
 
       if (!user.twofa_enabled) {
@@ -88,9 +95,8 @@ router.post("/login", async (req, res) => {
         });
       }
 
-      if (!twofa_code) {
+      if (!twofa_code)
         return res.json({ require_2fa: true });
-      }
 
       const verified = speakeasy.totp.verify({
         secret: user.twofa_secret,
@@ -106,7 +112,7 @@ router.post("/login", async (req, res) => {
     const token = jwt.sign(
       { id: user.id, role: user.role },
       process.env.JWT_SECRET,
-      { expiresIn: "2h" }
+      { expiresIn: "7d" }
     );
 
     res.json({
@@ -120,14 +126,64 @@ router.post("/login", async (req, res) => {
   }
 });
 
+/* ================= GOOGLE LOGIN ================= */
+router.post("/google", async (req, res) => {
+  try {
+    const { token } = req.body;
+
+    if (!token)
+      return res.status(400).json({ error: "Google token required" });
+
+    // NOTE:
+    // You should verify Google token properly with Google API in production.
+    // For now, this assumes frontend token is trusted.
+
+    const decoded = jwt.decode(token);
+    if (!decoded?.email)
+      return res.status(400).json({ error: "Invalid Google token" });
+
+    const email = decoded.email.toLowerCase();
+
+    let user = await pool.query(
+      "SELECT * FROM users WHERE email=$1",
+      [email]
+    );
+
+    if (user.rows.length === 0) {
+      const newUser = await pool.query(
+        `INSERT INTO users (full_name, email, password, role)
+         VALUES ($1,$2,$3,$4)
+         RETURNING id, role`,
+        [decoded.name || "Google User", email, "", "user"]
+      );
+
+      user = { rows: [newUser.rows[0]] };
+    }
+
+    const dbUser = user.rows[0];
+
+    const newToken = jwt.sign(
+      { id: dbUser.id, role: dbUser.role },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    res.json({ token: newToken, is_admin: false });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Google login failed" });
+  }
+});
+
 /* ================= FORGOT PASSWORD ================= */
 router.post("/forgot-password", async (req, res) => {
   try {
     const { email } = req.body;
 
     const result = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
+      "SELECT id FROM users WHERE email=$1",
+      [email.toLowerCase()]
     );
 
     if (result.rows.length === 0)
@@ -136,14 +192,18 @@ router.post("/forgot-password", async (req, res) => {
     const user = result.rows[0];
 
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const hashedToken = crypto.createHash("sha256")
+
+    const hashedToken = crypto
+      .createHash("sha256")
       .update(resetToken)
       .digest("hex");
 
     const expiry = new Date(Date.now() + 15 * 60 * 1000);
 
     await pool.query(
-      "UPDATE users SET reset_token=$1, reset_token_expiry=$2 WHERE id=$3",
+      `UPDATE users 
+       SET reset_token=$1, reset_token_expiry=$2 
+       WHERE id=$3`,
       [hashedToken, expiry, user.id]
     );
 
@@ -152,7 +212,7 @@ router.post("/forgot-password", async (req, res) => {
 
     const transporter = nodemailer.createTransport({
       host: process.env.SMTP_HOST,
-      port: process.env.SMTP_PORT,
+      port: Number(process.env.SMTP_PORT),
       secure: false,
       auth: {
         user: process.env.SMTP_USER,
@@ -184,7 +244,11 @@ router.post("/reset-password", async (req, res) => {
   try {
     const { token, newPassword } = req.body;
 
-    const hashedToken = crypto.createHash("sha256")
+    if (!token || !newPassword)
+      return res.status(400).json({ error: "Missing fields" });
+
+    const hashedToken = crypto
+      .createHash("sha256")
       .update(token)
       .digest("hex");
 

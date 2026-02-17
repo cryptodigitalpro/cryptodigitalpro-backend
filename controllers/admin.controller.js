@@ -43,14 +43,14 @@ router.post("/loan-status", auth, authAdmin, async (req, res) => {
     return res.status(404).json({ error: "Loan not found" });
   }
 
-  // 🔒 HARD STOP
+  // 🔒 prevent double credit
   if (loan.status === "credited") {
     return res.status(400).json({
-      error: "Loan already credited. Action blocked."
+      error: "Loan already credited."
     });
   }
 
-  // 🔒 Only approved loans can be credited
+  // 🔒 only approved can be credited
   if (status === "credited" && loan.status !== "approved") {
     return res.status(400).json({
       error: "Loan must be approved before crediting"
@@ -62,7 +62,27 @@ router.post("/loan-status", auth, authAdmin, async (req, res) => {
     [status, loan_id]
   );
 
+  /* ================= CREDIT BALANCE WHEN CREDITED ================= */
+  if (status === "credited") {
+    await pool.query(
+      `INSERT INTO balance_ledger
+       (user_id, amount, type, reference_id, admin_id, note)
+       VALUES ($1, $2, 'loan_credit', $3, $4, 'Loan credited')`,
+      [loan.user_id, loan.amount, loan.id, req.user.id]
+    );
+
+    notifyUser(loan.user_id, {
+      type: "loan",
+      message: `Your loan of ${loan.amount} has been credited`
+    });
+  }
+
   await logAdmin(req.user.id, `Loan #${loan_id} → ${status}`);
+
+  notifyAdmins({
+    type: "loan_update",
+    id: loan_id
+  });
 
   res.json({ success: true });
 });
@@ -125,17 +145,6 @@ router.post("/balance/adjust", auth, authAdmin, async (req, res) => {
   });
 
   res.json({ success: true });
-});
-
-/* ================= LOGS ================= */
-router.get("/logs", auth, authAdmin, async (req, res) => {
-  const q = await pool.query(`
-    SELECT admin_logs.*, users.email
-    FROM admin_logs
-    JOIN users ON users.id = admin_logs.admin_id
-    ORDER BY admin_logs.id DESC
-  `);
-  res.json(q.rows);
 });
 
 /* ================= ANALYTICS ================= */

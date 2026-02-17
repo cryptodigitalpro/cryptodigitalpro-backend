@@ -23,7 +23,11 @@ const userSchema = new mongoose.Schema(
       enum: ["user", "admin"],
       default: "user"
     },
-
+     
+	 availableBalance: {
+  type: Number,
+  default: 0
+}
     kyc_status: {
       type: String,
       enum: ["pending", "approved", "rejected"],
