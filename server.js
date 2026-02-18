@@ -1,142 +1,283 @@
-<script>
+require("dotenv").config();
 
-const API =
-  window.location.hostname === "localhost"
-    ? "http://127.0.0.1:5000"
-    : "https://cryptodigitalpro-api.onrender.com";
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const jwt = require("jsonwebtoken");
+const withdrawRoutes = require("./routes/withdraw.routes");
+const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 
-const $ = id => document.getElementById(id);
+const app = express();
+const PORT = process.env.PORT || 5000;
 
-/* TAB SWITCH */
-$("tabSignIn").onclick = () => {
-  $("tabSignIn").classList.add("active");
-  $("tabSignUp").classList.remove("active");
-  $("formSignIn").classList.add("active");
-  $("formSignUp").classList.remove("active");
-};
+/* ================= DATABASE ================= */
 
-$("tabSignUp").onclick = () => {
-  $("tabSignUp").classList.add("active");
-  $("tabSignIn").classList.remove("active");
-  $("formSignUp").classList.add("active");
-  $("formSignIn").classList.remove("active");
-};
+console.log("MONGO_URI exists:", !!process.env.MONGO_URI);
 
-/* PASSWORD TOGGLE */
-function togglePassword(id){
-  const input = document.getElementById(id);
-  const toggle = input.nextElementSibling;
-  if(input.type === "password"){
-    input.type = "text";
-    toggle.textContent = "Hide";
-  } else {
-    input.type = "password";
-    toggle.textContent = "Show";
-  }
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB Connected"))
+  .catch(err => console.error("Mongo Error:", err));
+
+/* ================= MODELS ================= */
+
+const User = require("./models/User");
+const Loan = require("./models/Loan");
+const Withdrawal = require("./models/Withdrawal");
+const Notification = require("./models/Notification");
+
+/* ================= MIDDLEWARE ================= */
+
+app.use(express.json());
+
+app.use(cors({
+  origin: [
+    "http://localhost:3000",
+    "http://127.0.0.1:5500",
+    "https://cryptodigitalpro.com",
+    "https://www.cryptodigitalpro.com"
+  ],
+  credentials: true
+}));
+
+/* ================= AUTH ================= */
+
+function authenticateToken(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) return res.sendStatus(401);
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+    if (err) return res.sendStatus(403);
+    req.user = user;
+    next();
+  });
 }
 
-/* LOGIN */
-$("btnSignIn").onclick = async () => {
-  const email = $("signinEmail").value.trim();
-  const password = $("signinPass").value.trim();
-  if(!email || !password) return alert("Missing credentials");
+app.use("/api/withdraw", authenticateToken, withdrawRoutes);
+app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
 
+/* ======================================================
+   ================= APPLY LOAN =========================
+   ====================================================== */
+
+app.post("/api/loan/apply", authenticateToken, async (req, res) => {
   try {
-    const res = await fetch(API + "/api/auth/login", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ email, password })
+
+    const { loan_type, amount, duration } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid loan amount" });
+    }
+
+    const activeLoan = await Loan.findOne({
+      userId: req.user.id,
+      status: { $in: ["pending", "approved"] }
     });
 
-    const data = await res.json();
-
-    if(!res.ok) {
-      console.error("Login error:", data);
-      return alert(data.message || data.error || "Login failed");
+    if (activeLoan) {
+      return res.status(400).json({
+        message: "You already have an active loan."
+      });
     }
 
-    localStorage.setItem("token", data.token);
+    const interestRate = 0.10;
+    const interestAmount = amount * interestRate;
+    const totalRepayment = amount + interestAmount;
 
-    const redirect = localStorage.getItem("redirectAfterLogin");
-
-    if (redirect) {
-      localStorage.removeItem("redirectAfterLogin");
-      location.href = redirect;
-    } else {
-      location.href = "dashboard.html";
-    }
-
-  } catch(err){
-    console.error("Server error:", err);
-    alert("Server not reachable");
-  }
-};
-
-/* SIGNUP */
-$("btnSignUp").onclick = async () => {
-  const name = $("signupName").value.trim();
-  const email = $("signupEmail").value.trim();
-  const pass = $("signupPass").value.trim();
-  const confirm = $("signupConfirm").value.trim();
-
-  if(!name || !email || !pass) return alert("All fields required");
-  if(pass !== confirm) return alert("Passwords do not match");
-
-  try {
-    const res = await fetch(API + "/api/auth/register", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ full_name:name, email, password:pass })
+    const loan = await Loan.create({
+      userId: req.user.id,
+      loan_type,
+      amount,
+      duration,
+      interestRate,
+      interestAmount,
+      totalRepayment,
+      status: "pending"
     });
 
-    const data = await res.json();
-
-    if(!res.ok) {
-      console.error("Signup error:", data);
-      return alert(data.message || data.error || "Signup failed");
-    }
-
-    localStorage.setItem("token", data.token);
-
-    const redirect = localStorage.getItem("redirectAfterLogin");
-
-    if (redirect) {
-      localStorage.removeItem("redirectAfterLogin");
-      location.href = redirect;
-    } else {
-      location.href = "dashboard.html";
-    }
-
-  } catch(err){
-    console.error("Server error:", err);
-    alert("Server not reachable");
-  }
-};
-
-/* GOOGLE LOGIN */
-async function handleGoogleLogin(response) {
-  try {
-    const res = await fetch(API + "/api/auth/google", {
-      method:"POST",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ token: response.credential })
+    await Notification.create({
+      user: req.user.id,
+      title: "Loan Submitted",
+      message: `Your loan request of $${amount} is under review.`,
+      type: "loan"
     });
 
-    const data = await res.json();
+    res.json({ message: "Loan submitted successfully", loan });
 
-    if(!res.ok) {
-      console.error("Google login error:", data);
-      return alert(data.message || data.error || "Google login failed");
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/* ======================================================
+   ================= ADMIN LOAN APPROVAL =================
+   ====================================================== */
+
+app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
+  try {
+
+    if (req.user.role !== "admin") {
+      return res.status(403).json({ message: "Access denied" });
     }
 
-    localStorage.setItem("token", data.token);
+    const { status } = req.body;
 
-    location.href = "dashboard.html";
+    if (!["approved", "rejected"].includes(status)) {
+      return res.status(400).json({ message: "Invalid status" });
+    }
 
-  } catch(err){
-    console.error("Server error:", err);
-    alert("Server unreachable");
+    const loan = await Loan.findById(req.params.id);
+    if (!loan) return res.status(404).json({ message: "Loan not found" });
+
+    if (loan.status === "approved" && status === "approved") {
+      return res.status(400).json({ message: "Loan already approved" });
+    }
+
+    loan.status = status;
+    await loan.save();
+
+    const user = await User.findById(loan.userId);
+
+    if (status === "approved") {
+      user.availableBalance += loan.amount;
+      user.outstandingBalance += loan.totalRepayment;
+
+      await user.save();
+
+      await Notification.create({
+        user: loan.userId,
+        title: "Loan Approved",
+        message: `Your ${loan.loan_type} loan has been approved. Funds are now available.`,
+        type: "loan"
+      });
+    }
+
+    if (status === "rejected") {
+      await Notification.create({
+        user: loan.userId,
+        title: "Loan Rejected",
+        message: `Your ${loan.loan_type} loan was rejected.`,
+        type: "loan"
+      });
+    }
+
+    res.json({ message: "Loan updated successfully" });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
   }
-}
+});
 
-</script>
+/* ======================================================
+   ================= WITHDRAW REQUEST ===================
+   ====================================================== */
+
+app.post("/api/withdraw", authenticateToken, async (req, res) => {
+  try {
+
+    const { amount } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid withdrawal amount" });
+    }
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    if (user.kycStatus !== "approved") {
+      return res.status(403).json({
+        message: "KYC approval required before withdrawal."
+      });
+    }
+
+    if (user.availableBalance < amount) {
+      return res.status(400).json({
+        message: "Insufficient available balance."
+      });
+    }
+
+    const activeWithdraw = await Withdrawal.findOne({
+      userId: user._id,
+      status: { $in: ["processing", "fee_required", "verification_hold"] }
+    });
+
+    if (activeWithdraw) {
+      return res.status(400).json({
+        message: "You already have an active withdrawal."
+      });
+    }
+
+    const withdrawal = await Withdrawal.create({
+      userId: user._id,
+      amount,
+      status: "processing",
+      progress: 0,
+      fee_paid: false,
+      admin_verified: false
+    });
+
+    await Notification.create({
+      user: user._id,
+      title: "Withdrawal Submitted",
+      message: `Your withdrawal of $${amount} is now processing.`,
+      type: "withdraw"
+    });
+
+    res.json({
+      message: "Withdrawal started successfully",
+      withdrawal
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/* ======================================================
+   ================= DASHBOARD ==========================
+   ====================================================== */
+
+app.get("/api/dashboard", authenticateToken, async (req, res) => {
+  try {
+
+    const user = await User.findById(req.user.id);
+    if (!user) return res.status(404).json({ message: "User not found" });
+
+    const loans = await Loan.find({ userId: req.user.id })
+      .sort({ createdAt: -1 });
+
+    const withdrawals = await Withdrawal.find({
+      userId: req.user.id
+    }).sort({ createdAt: -1 });
+
+    const notifications = await Notification.find({
+      user: req.user.id
+    }).sort({ createdAt: -1 });
+
+    res.json({
+      balances: {
+        deposited: user.depositedBalance || 0,
+        available: user.availableBalance || 0,
+        outstanding: user.outstandingBalance || 0,
+        withdrawn: user.withdrawnBalance || 0
+      },
+      loans,
+      withdrawals,
+      notifications
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+/* ================= START SERVER ================= */
+
+app.listen(PORT, () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+});
