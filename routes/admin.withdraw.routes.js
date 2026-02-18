@@ -1,45 +1,54 @@
 const express = require("express");
-const router = express.router();
+const router = express.Router();
 
-const withdrawal = require("../models/withdrawal");
+const Withdrawal = require("../models/withdrawal");
 
 // ============================
 // ADMIN LIST ALL WITHDRAWALS
 // ============================
 
 router.get("/", async (req, res) => {
-  const { status } = req.query;
+  try {
+    const { status } = req.query;
 
-  let filter = {};
-  if (status) filter.status = status;
+    let filter = {};
+    if (status) filter.status = status;
 
-  const withdrawals = await withdrawal.find(filter)
-    .populate("userId", "email")
-    .sort({ createdAt: -1 });
+    const withdrawals = await Withdrawal.find(filter)
+      .populate("userId", "email")
+      .sort({ createdAt: -1 });
 
-  res.json(withdrawals);
+    res.json(withdrawals);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
 });
+
 // ============================
 // ADMIN BROADCAST APPROVAL
 // ============================
 
 router.put("/:id/broadcast-approve", async (req, res) => {
+  try {
+    if (req.user.role !== "admin")
+      return res.sendStatus(403);
 
-  if (req.user.role !== "admin")
-    return res.sendStatus(403);
+    const withdrawal = await Withdrawal.findById(req.params.id);
 
-  const withdrawal = await Withdrawal.findById(req.params.id);
+    if (!withdrawal)
+      return res.sendStatus(404);
 
-  if (!withdrawal)
-    return res.sendStatus(404);
+    if (withdrawal.status !== "broadcast_hold")
+      return res.status(400).json({ message: "Invalid stage" });
 
-  if (withdrawal.status !== "broadcast_hold")
-    return res.status(400).json({ message: "Invalid stage" });
+    withdrawal.status = "broadcast_approved";
+    await withdrawal.save();
 
-  withdrawal.status = "broadcast_approved";
-  await withdrawal.save();
+    res.json({ message: "Broadcast approved" });
 
-  res.json({ message: "Broadcast approved" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 // ============================
@@ -47,22 +56,26 @@ router.put("/:id/broadcast-approve", async (req, res) => {
 // ============================
 
 router.put("/:id/compliance-approve", async (req, res) => {
+  try {
+    if (req.user.role !== "admin")
+      return res.sendStatus(403);
 
-  if (req.user.role !== "admin")
-    return res.sendStatus(403);
+    const withdrawal = await Withdrawal.findById(req.params.id);
 
-  const withdrawal = await Withdrawal.findById(req.params.id);
+    if (!withdrawal)
+      return res.sendStatus(404);
 
-  if (!withdrawal)
-    return res.sendStatus(404);
+    if (withdrawal.status !== "compliance_hold")
+      return res.status(400).json({ message: "Invalid stage" });
 
-  if (withdrawal.status !== "compliance_hold")
-    return res.status(400).json({ message: "Invalid stage" });
+    withdrawal.status = "compliance_approved";
+    await withdrawal.save();
 
-  withdrawal.status = "compliance_approved";
-  await withdrawal.save();
+    res.json({ message: "Compliance approved" });
 
-  res.json({ message: "Compliance approved" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 // ============================
@@ -70,26 +83,30 @@ router.put("/:id/compliance-approve", async (req, res) => {
 // ============================
 
 router.put("/:id/reject", async (req, res) => {
+  try {
+    if (req.user.role !== "admin")
+      return res.sendStatus(403);
 
-  if (req.user.role !== "admin")
-    return res.sendStatus(403);
+    const { reason } = req.body;
 
-  const { reason } = req.body;
+    const withdrawal = await Withdrawal.findById(req.params.id);
 
-  const withdrawal = await Withdrawal.findById(req.params.id);
+    if (!withdrawal)
+      return res.sendStatus(404);
 
-  if (!withdrawal)
-    return res.sendStatus(404);
+    if (withdrawal.status === "completed")
+      return res.status(400).json({ message: "Cannot reject completed withdrawal" });
 
-  if (withdrawal.status === "completed")
-    return res.status(400).json({ message: "Cannot reject completed withdrawal" });
+    withdrawal.status = "rejected";
+    withdrawal.rejectionReason = reason || "Rejected by admin";
 
-  withdrawal.status = "rejected";
-  withdrawal.rejectionReason = reason || "Rejected by admin";
+    await withdrawal.save();
 
-  await withdrawal.save();
+    res.json({ message: "Withdrawal rejected successfully" });
 
-  res.json({ message: "Withdrawal rejected successfully" });
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
 });
 
 module.exports = router;
