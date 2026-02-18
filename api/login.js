@@ -1,5 +1,5 @@
 const { createAccessToken, createRefreshToken } = require("../utils/tokens");
-const pool = require("../db"); // adjust if your pool is elsewhere
+const pool = require("../db");   // ✅ CORRECT // adjust if your pool is elsewhere
 const bcrypt = require("bcrypt");
 
 
