@@ -1,17 +1,22 @@
-import jwt from "jsonwebtoken";
+const jwt = require("jsonwebtoken");
 
-export function signAccessToken(user) {
+function createAccessToken(user) {
   return jwt.sign(
-    { id: user.id, isAdmin: user.is_admin },
+    { id: user.id, role: user.role || user.is_admin },
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || "15m" }
   );
 }
 
-export function signRefreshToken(user) {
+function createRefreshToken(user) {
   return jwt.sign(
     { id: user.id },
     process.env.JWT_REFRESH_SECRET,
     { expiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d" }
   );
 }
+
+module.exports = {
+  createAccessToken,
+  createRefreshToken
+};

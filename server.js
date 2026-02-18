@@ -4,6 +4,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const authRoutes = require("./routes/auth.routes");
+
 const withdrawRoutes = require("./routes/withdraw.routes");
 const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 
@@ -20,10 +22,10 @@ mongoose.connect(process.env.MONGO_URI)
 
 /* ================= MODELS ================= */
 
-const user = require("./models/user");
-const loan = require("./models/loan");
-const withdrawal = require("./models/withdrawal");
-const notification = require("./models/notification");
+const User = require("./models/user");
+const Loan = require("./models/loan");
+const Withdrawal = require("./models/withdrawal");
+const Notification = require("./models/notification");
 
 /* ================= MIDDLEWARE ================= */
 
@@ -56,6 +58,7 @@ function authenticateToken(req, res, next) {
 
 app.use("/api/withdraw", authenticateToken, withdrawRoutes);
 app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
+app.use("/api/auth", authRoutes);
 
 /* ======================================================
    ================= APPLY LOAN =========================
