@@ -1,9 +1,9 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const router = express.Router();
+const router = express.router();
 
-const Withdrawal = require("../models/withdrawal");
-const User = require("../models/User");
+const withdrawal = require("../models/withdrawal");
+const user = require("../models/user");
 
 // ============================
 // 1️⃣ CREATE WITHDRAWAL

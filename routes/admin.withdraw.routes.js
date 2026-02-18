@@ -1,7 +1,7 @@
 const express = require("express");
-const router = express.Router();
+const router = express.router();
 
-const Withdrawal = require("../models/Withdrawal");
+const withdrawal = require("../models/withdrawal");
 
 // ============================
 // ADMIN LIST ALL WITHDRAWALS
@@ -13,7 +13,7 @@ router.get("/", async (req, res) => {
   let filter = {};
   if (status) filter.status = status;
 
-  const withdrawals = await Withdrawal.find(filter)
+  const withdrawals = await withdrawal.find(filter)
     .populate("userId", "email")
     .sort({ createdAt: -1 });
 

@@ -20,10 +20,10 @@ mongoose.connect(process.env.MONGO_URI)
 
 /* ================= MODELS ================= */
 
-const User = require("./models/User");
-const Loan = require("./models/Loan");
-const Withdrawal = require("./models/Withdrawal");
-const Notification = require("./models/Notification");
+const user = require("./models/user");
+const loan = require("./models/loan");
+const withdrawal = require("./models/withdrawal");
+const notification = require("./models/notification");
 
 /* ================= MIDDLEWARE ================= */
 
