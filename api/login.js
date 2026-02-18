@@ -1,6 +1,7 @@
 const { createAccessToken, createRefreshToken } = require("../utils/tokens");
-const pool = require("../config/db"); // adjust if your pool is elsewhere
+const pool = require("../db"); // adjust if your pool is elsewhere
 const bcrypt = require("bcrypt");
+
 
 module.exports = async (req, res) => {
   try {
