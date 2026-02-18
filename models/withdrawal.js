@@ -9,12 +9,14 @@ const withdrawalSchema = new mongoose.Schema({
 
   amount: {
     type: Number,
-    required: true
+    required: true,
+    min: 0
   },
 
   walletAddress: {
     type: String,
-    required: true
+    required: true,
+    trim: true
   },
 
   network: {
@@ -35,6 +37,12 @@ const withdrawalSchema = new mongoose.Schema({
       "rejected"
     ],
     default: "pending"
+  },
+
+  rejectionReason: {
+    type: String,
+    default: null,
+    trim: true
   }
 
 }, { timestamps: true });
