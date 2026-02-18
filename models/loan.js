@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const loanSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    ref: "user",
     required: true
   },
 
@@ -23,4 +23,4 @@ const loanSchema = new mongoose.Schema({
 
 }, { timestamps: true });
 
-module.exports = mongoose.model("Loan", loanSchema);
+module.exports = mongoose.model("loan", loanSchema);
