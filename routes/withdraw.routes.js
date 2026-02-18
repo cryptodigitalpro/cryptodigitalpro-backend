@@ -1,6 +1,6 @@
 const express = require("express");
 const mongoose = require("mongoose");
-const router = express.router();
+const router = express.Router();
 
 const withdrawal = require("../models/withdrawal");
 const user = require("../models/user");
