@@ -4,8 +4,8 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
-const authRoutes = require("./routes/auth.routes");
 
+const authRoutes = require("./routes/auth.routes");
 const withdrawRoutes = require("./routes/withdraw.routes");
 const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 
@@ -16,9 +16,15 @@ const PORT = process.env.PORT || 5000;
 
 console.log("MONGO_URI exists:", !!process.env.MONGO_URI);
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.error("Mongo Error:", err));
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("✅ MongoDB Connected"))
+.catch(err => {
+  console.error("Mongo Error:", err);
+  process.exit(1);
+});
 
 /* ================= MODELS ================= */
 
@@ -45,20 +51,27 @@ app.use(cors({
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization;
-  if (!authHeader) return res.sendStatus(401);
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.sendStatus(401);
+  }
 
   const token = authHeader.split(" ")[1];
 
-  jwt.verify(token, process.env.JWT_SECRET, (err, user) => {
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) return res.sendStatus(403);
-    req.user = user;
+
+    req.user = decoded; // { id, role }
     next();
   });
 }
 
+/* ================= ROUTES ================= */
+
+app.use("/api/auth", authRoutes);
+
 app.use("/api/withdraw", authenticateToken, withdrawRoutes);
 app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
-app.use("/api/auth", authRoutes);
 
 /* ======================================================
    ================= APPLY LOAN =========================
@@ -152,7 +165,7 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
       await Notification.create({
         user: loan.userId,
         title: "Loan Approved",
-        message: `Your ${loan.loan_type} loan has been approved. Funds are now available.`,
+        message: `Your ${loan.loan_type} loan has been approved.`,
         type: "loan"
       });
     }
