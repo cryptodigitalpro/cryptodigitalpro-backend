@@ -1,8 +1,8 @@
-import bcrypt from "bcrypt";
-import { createAccessToken, createRefreshToken } from "../utils/tokens.js";
-import pool from "../config/db.js";
+const bcrypt = require("bcryptjs");
+const User = require("../models/user");
+const { createAccessToken, createRefreshToken } = require("../utils/tokens");
 
-export default async function register(req, res) {
+module.exports = async function register(req, res) {
   try {
     const { full_name, email, password } = req.body;
 
@@ -10,39 +10,28 @@ export default async function register(req, res) {
       return res.status(400).json({ error: "All fields required" });
     }
 
-    const existing = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [email]
-    );
+    const existingUser = await User.findOne({ email });
 
-    if (existing.rows.length > 0) {
+    if (existingUser) {
       return res.status(400).json({ error: "Email already registered" });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const newUser = await pool.query(
-      `INSERT INTO users(full_name, email, password)
-       VALUES($1,$2,$3)
-       RETURNING id, email, role`,
-      [full_name, email, hashedPassword]
-    );
+    const newUser = await User.create({
+      full_name,
+      email,
+      password: hashedPassword,
+      role: "user"
+    });
 
-    const user = newUser.rows[0];
-
-    const accessToken = createAccessToken(user);
-    const refreshToken = createRefreshToken(user);
-
-    await pool.query(
-      `INSERT INTO refresh_tokens(user_id, token, expires_at)
-       VALUES($1,$2,NOW()+INTERVAL '7 days')`,
-      [user.id, refreshToken]
-    );
+    const accessToken = createAccessToken(newUser);
+    const refreshToken = createRefreshToken(newUser);
 
     res.json({ accessToken, refreshToken });
 
   } catch (err) {
-    console.error(err);
+    console.error("Register error:", err);
     res.status(500).json({ error: "Server error" });
   }
-}
+};

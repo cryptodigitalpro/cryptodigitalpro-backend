@@ -1,7 +1,6 @@
 const { createAccessToken, createRefreshToken } = require("../utils/tokens");
-const pool = require("../db");   // ✅ CORRECT // adjust if your pool is elsewhere
-const bcrypt = require("bcrypt");
-
+const User = require("../models/user");
+const bcrypt = require("bcryptjs");
 
 module.exports = async (req, res) => {
   try {
@@ -11,12 +10,7 @@ module.exports = async (req, res) => {
       return res.status(400).json({ error: "Missing credentials" });
     }
 
-    const result = await pool.query(
-      "SELECT * FROM users WHERE email = $1",
-      [email]
-    );
-
-    const user = result.rows[0];
+    const user = await User.findOne({ email });
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
@@ -31,11 +25,9 @@ module.exports = async (req, res) => {
     const accessToken = createAccessToken(user);
     const refreshToken = createRefreshToken(user);
 
-    await pool.query(
-      `INSERT INTO refresh_tokens(user_id, token, expires_at)
-       VALUES($1,$2,NOW()+INTERVAL '7 days')`,
-      [user.id, refreshToken]
-    );
+    // If you store refresh tokens in Mongo:
+    user.refreshToken = refreshToken;
+    await user.save();
 
     res.json({ accessToken, refreshToken });
 

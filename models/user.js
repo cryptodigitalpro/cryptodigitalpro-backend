@@ -15,7 +15,13 @@ const userSchema = new mongoose.Schema({
 
   password: {
     type: String,
-    required: true
+    required: false   // allow Google users without password
+  },
+
+  role: {
+    type: String,
+    enum: ["user", "admin"],
+    default: "user"
   },
 
   availableBalance: {
@@ -38,10 +44,18 @@ const userSchema = new mongoose.Schema({
     default: 0
   },
 
-  kyc_status: {   // ✅ comma before this field
+  kyc_status: {
     type: String,
     enum: ["pending", "approved", "rejected"],
     default: "pending"
+  },
+
+  reset_token: {
+    type: String
+  },
+
+  reset_token_expires: {
+    type: Date
   }
 
 }, { timestamps: true });

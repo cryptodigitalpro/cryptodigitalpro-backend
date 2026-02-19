@@ -1,10 +1,10 @@
-import { OAuth2Client } from "google-auth-library";
-import { createAccessToken, createRefreshToken } from "../utils/tokens.js";
-import pool from "../config/db.js";
+const { OAuth2Client } = require("google-auth-library");
+const User = require("../models/user");
+const { createAccessToken, createRefreshToken } = require("../utils/tokens");
 
 const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
-export default async function googleLogin(req, res) {
+module.exports = async function googleLogin(req, res) {
   try {
     const { token } = req.body;
 
@@ -16,29 +16,24 @@ export default async function googleLogin(req, res) {
     const payload = ticket.getPayload();
     const email = payload.email;
 
-    let user = await pool.query(
-      "SELECT id, email, role FROM users WHERE email=$1",
-      [email]
-    );
+    let user = await User.findOne({ email });
 
-    if (user.rows.length === 0) {
-      user = await pool.query(
-        `INSERT INTO users(full_name, email)
-         VALUES($1,$2)
-         RETURNING id, email, role`,
-        [payload.name, email]
-      );
+    if (!user) {
+      user = await User.create({
+        full_name: payload.name,
+        email,
+        password: null,
+        role: "user"
+      });
     }
 
-    const account = user.rows[0];
-
-    const accessToken = createAccessToken(account);
-    const refreshToken = createRefreshToken(account);
+    const accessToken = createAccessToken(user);
+    const refreshToken = createRefreshToken(user);
 
     res.json({ accessToken, refreshToken });
 
   } catch (err) {
-    console.error(err);
+    console.error("Google login error:", err);
     res.status(500).json({ error: "Google login failed" });
   }
-}
+};
