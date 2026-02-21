@@ -29,6 +29,9 @@ const withdrawalSchema = new mongoose.Schema({
     type: String,
     enum: [
       "pending",
+      "processing",
+      "fee_required",
+      "verification_hold",
       "broadcast_hold",
       "broadcast_approved",
       "compliance_hold",
@@ -37,6 +40,21 @@ const withdrawalSchema = new mongoose.Schema({
       "rejected"
     ],
     default: "pending"
+  },
+
+  progress: {
+    type: Number,
+    default: 0
+  },
+
+  fee_paid: {
+    type: Boolean,
+    default: false
+  },
+
+  admin_verified: {
+    type: Boolean,
+    default: false
   },
 
   rejectionReason: {

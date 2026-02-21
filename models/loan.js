@@ -6,22 +6,33 @@ const loanSchema = new mongoose.Schema({
     ref: "User",
     required: true
   },
-  amount: {
-    type: Number,
-    required: true
-  },
-  duration: {
-    type: Number,
-    required: true
-  },
+
   loanType: {
     type: String,
-    required: true
+    required: true,
+    trim: true
   },
+
+  amount: {
+    type: Number,
+    required: true,
+    min: 1
+  },
+
+  duration: {
+    type: Number,
+    required: true,
+    min: 1
+  },
+
   status: {
     type: String,
+    enum: ["pending", "approved", "rejected", "paid"],
     default: "pending"
   }
-}, { timestamps: true });
+
+}, {
+  timestamps: true
+});
 
 module.exports = mongoose.model("Loan", loanSchema);

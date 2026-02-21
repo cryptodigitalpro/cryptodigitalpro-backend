@@ -16,6 +16,8 @@ const PORT = process.env.PORT || 5000;
 
 console.log("MONGO_URI exists:", !!process.env.MONGO_URI);
 
+mongoose.set("strictQuery", true); // ✅ FIX — prevents hidden query bugs
+
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
   .catch(err => {
@@ -58,7 +60,7 @@ function authenticateToken(req, res, next) {
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
     if (err) return res.sendStatus(403);
 
-    req.user = decoded; // { id, role }
+    req.user = decoded;
     next();
   });
 }
@@ -79,7 +81,18 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
 
     const { loan_type, amount, duration } = req.body;
 
-    if (!amount || amount <= 0) {
+    // ✅ FIX — validate required fields
+    if (!loan_type) {
+      return res.status(400).json({ message: "Loan type is required" });
+    }
+
+    if (!duration || duration <= 0) {
+      return res.status(400).json({ message: "Invalid duration" });
+    }
+
+    const numericAmount = Number(amount); // ✅ FIX — ensure number
+
+    if (!numericAmount || numericAmount <= 0) {
       return res.status(400).json({ message: "Invalid loan amount" });
     }
 
@@ -95,13 +108,13 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
     }
 
     const interestRate = 0.10;
-    const interestAmount = amount * interestRate;
-    const totalRepayment = amount + interestAmount;
+    const interestAmount = numericAmount * interestRate;
+    const totalRepayment = numericAmount + interestAmount;
 
     const loan = await Loan.create({
       userId: req.user.id,
-      loan_type,
-      amount,
+      loanType: loan_type, // ✅ FIX — must match schema
+      amount: numericAmount,
       duration,
       interestRate,
       interestAmount,
@@ -112,7 +125,7 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
     await Notification.create({
       user: req.user.id,
       title: "Loan Submitted",
-      message: `Your loan request of $${amount} is under review.`,
+      message: `Your loan request of $${numericAmount} is under review.`,
       type: "loan"
     });
 
@@ -155,14 +168,14 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
 
     if (status === "approved") {
       user.availableBalance += loan.amount;
-      user.outstandingBalance += loan.totalRepayment;
+      user.outstandingBalance += loan.totalRepayment || loan.amount; // ✅ FIX fallback
 
       await user.save();
 
       await Notification.create({
         user: loan.userId,
         title: "Loan Approved",
-        message: `Your ${loan.loan_type} loan has been approved.`,
+        message: `Your ${loan.loanType} loan has been approved.`,
         type: "loan"
       });
     }
@@ -171,7 +184,7 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
       await Notification.create({
         user: loan.userId,
         title: "Loan Rejected",
-        message: `Your ${loan.loan_type} loan was rejected.`,
+        message: `Your ${loan.loanType} loan was rejected.`,
         type: "loan"
       });
     }
@@ -192,21 +205,22 @@ app.post("/api/withdraw", authenticateToken, async (req, res) => {
   try {
 
     const { amount } = req.body;
+    const numericAmount = Number(amount); // ✅ FIX
 
-    if (!amount || amount <= 0) {
+    if (!numericAmount || numericAmount <= 0) {
       return res.status(400).json({ message: "Invalid withdrawal amount" });
     }
 
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.kycStatus !== "approved") {
+    if (user.kyc_status !== "approved") {
       return res.status(403).json({
         message: "KYC approval required before withdrawal."
       });
     }
 
-    if (user.availableBalance < amount) {
+    if (user.availableBalance < numericAmount) {
       return res.status(400).json({
         message: "Insufficient available balance."
       });
@@ -225,7 +239,7 @@ app.post("/api/withdraw", authenticateToken, async (req, res) => {
 
     const withdrawal = await Withdrawal.create({
       userId: user._id,
-      amount,
+      amount: numericAmount,
       status: "processing",
       progress: 0,
       fee_paid: false,
@@ -235,7 +249,7 @@ app.post("/api/withdraw", authenticateToken, async (req, res) => {
     await Notification.create({
       user: user._id,
       title: "Withdrawal Submitted",
-      message: `Your withdrawal of $${amount} is now processing.`,
+      message: `Your withdrawal of $${numericAmount} is now processing.`,
       type: "withdraw"
     });
 
