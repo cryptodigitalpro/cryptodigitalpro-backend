@@ -8,6 +8,8 @@ const jwt = require("jsonwebtoken");
 const authRoutes = require("./routes/auth.routes");
 const withdrawRoutes = require("./routes/withdraw.routes");
 const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
+const settingsRoutes = require("./routes/user.settings.routes");
+const adminPanel = require("./routes/admin.panel.routes");
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -35,11 +37,9 @@ const Notification = require("./models/notification");
 /* ================= MIDDLEWARE ================= */
 
 app.use(express.json());
-
-/* ✅ ADDED — TRUST PROXY (important for hosting platforms like Render) */
 app.set("trust proxy", 1);
+app.disable("x-powered-by");
 
-/* ✅ IMPROVED CORS (keeps your domains but prevents forbidden issue) */
 const allowedOrigins = [
   "http://localhost:3000",
   "http://127.0.0.1:5500",
@@ -53,13 +53,12 @@ app.use(cors({
     if(allowedOrigins.includes(origin)){
       return callback(null,true);
     } else {
-      return callback(null,true); // allow temporarily to avoid block
+      return callback(null,true);
     }
   },
   credentials:true
 }));
 
-/* ✅ ADDED — PREFLIGHT FIX */
 app.options("*", cors());
 
 /* ================= AUTH ================= */
@@ -68,14 +67,13 @@ function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message:"Unauthorized" }); // ✅ FIX JSON response
+    return res.status(401).json({ message:"Unauthorized" });
   }
 
   const token = authHeader.split(" ")[1];
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(403).json({ message:"Invalid token" }); // ✅ FIX JSON response
-
+    if (err) return res.status(403).json({ message:"Invalid token" });
     req.user = decoded;
     next();
   });
@@ -86,6 +84,33 @@ function authenticateToken(req, res, next) {
 app.use("/api/auth", authRoutes);
 app.use("/api/withdraw", authenticateToken, withdrawRoutes);
 app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
+app.use("/api", authenticateToken, settingsRoutes);
+app.use("/api", authenticateToken, adminPanel);
+
+app.use("/uploads", express.static("uploads"));
+
+/* ======================================================
+   =============== ADMIN ALERT HELPER ===================
+   ====================================================== */
+
+async function notifyAdmins(title, message){
+  try{
+    const admins = await User.find({ role:"admin" });
+    for(const admin of admins){
+      await Notification.create({
+        user: admin._id,
+        title,
+        message,
+        type: "admin_alert"
+      });
+
+      /* REALTIME ADMIN ALERT */
+      sendRealtime(admin._id,"admin_alert",{title,message});
+    }
+  }catch(err){
+    console.error("Admin notify error:",err);
+  }
+}
 
 /* ======================================================
    ================= APPLY LOAN =========================
@@ -96,30 +121,24 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
 
     const { loan_type, amount, duration } = req.body;
 
-    if (!loan_type) {
+    if (!loan_type)
       return res.status(400).json({ message: "Loan type is required" });
-    }
 
-    if (!duration || duration <= 0) {
+    if (!duration || duration <= 0)
       return res.status(400).json({ message: "Invalid duration" });
-    }
 
     const numericAmount = Number(amount);
 
-    if (!numericAmount || numericAmount <= 0) {
+    if (!numericAmount || numericAmount <= 0)
       return res.status(400).json({ message: "Invalid loan amount" });
-    }
 
     const activeLoan = await Loan.findOne({
       userId: req.user.id,
       status: { $in: ["pending", "approved"] }
     });
 
-    if (activeLoan) {
-      return res.status(400).json({
-        message: "You already have an active loan."
-      });
-    }
+    if (activeLoan)
+      return res.status(400).json({ message: "You already have an active loan." });
 
     const interestRate = 0.10;
     const interestAmount = numericAmount * interestRate;
@@ -143,6 +162,18 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
       type: "loan"
     });
 
+    /* REALTIME USER EVENT */
+    sendRealtime(req.user.id,"loan_update",{
+      message:"Loan submitted successfully",
+      status:"pending",
+      amount:numericAmount
+    });
+
+    await notifyAdmins(
+      "New Loan Application",
+      `User ${req.user.id} applied for $${numericAmount}`
+    );
+
     res.json({ message: "Loan submitted successfully", loan });
 
   } catch (err) {
@@ -158,22 +189,19 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
 app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
   try {
 
-    if (req.user.role !== "admin") {
+    if (req.user.role !== "admin")
       return res.status(403).json({ message: "Access denied" });
-    }
 
     const { status } = req.body;
 
-    if (!["approved", "rejected"].includes(status)) {
+    if (!["approved", "rejected"].includes(status))
       return res.status(400).json({ message: "Invalid status" });
-    }
 
     const loan = await Loan.findById(req.params.id);
     if (!loan) return res.status(404).json({ message: "Loan not found" });
 
-    if (loan.status === "approved" && status === "approved") {
+    if (loan.status === "approved" && status === "approved")
       return res.status(400).json({ message: "Loan already approved" });
-    }
 
     loan.status = status;
     await loan.save();
@@ -183,7 +211,6 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
     if (status === "approved") {
       user.availableBalance += loan.amount;
       user.outstandingBalance += loan.totalRepayment || loan.amount;
-
       await user.save();
 
       await Notification.create({
@@ -191,6 +218,12 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
         title: "Loan Approved",
         message: `Your ${loan.loanType} loan has been approved.`,
         type: "loan"
+      });
+
+      sendRealtime(loan.userId,"loan_update",{
+        message:"Loan approved",
+        status:"approved",
+        amount:loan.amount
       });
     }
 
@@ -200,6 +233,11 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
         title: "Loan Rejected",
         message: `Your ${loan.loanType} loan was rejected.`,
         type: "loan"
+      });
+
+      sendRealtime(loan.userId,"loan_update",{
+        message:"Loan rejected",
+        status:"rejected"
       });
     }
 
@@ -221,35 +259,25 @@ app.post("/api/withdraw", authenticateToken, async (req, res) => {
     const { amount } = req.body;
     const numericAmount = Number(amount);
 
-    if (!numericAmount || numericAmount <= 0) {
+    if (!numericAmount || numericAmount <= 0)
       return res.status(400).json({ message: "Invalid withdrawal amount" });
-    }
 
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    if (user.kyc_status !== "approved") {
-      return res.status(403).json({
-        message: "KYC approval required before withdrawal."
-      });
-    }
+    if (user.kyc_status !== "approved")
+      return res.status(403).json({ message: "KYC approval required before withdrawal." });
 
-    if (user.availableBalance < numericAmount) {
-      return res.status(400).json({
-        message: "Insufficient available balance."
-      });
-    }
+    if (user.availableBalance < numericAmount)
+      return res.status(400).json({ message: "Insufficient available balance." });
 
     const activeWithdraw = await Withdrawal.findOne({
       userId: user._id,
-      status: { $in: ["processing", "fee_required", "verification_hold"] }
+      status: { $in: ["processing","fee_required","verification_hold"] }
     });
 
-    if (activeWithdraw) {
-      return res.status(400).json({
-        message: "You already have an active withdrawal."
-      });
-    }
+    if (activeWithdraw)
+      return res.status(400).json({ message: "You already have an active withdrawal." });
 
     const withdrawal = await Withdrawal.create({
       userId: user._id,
@@ -267,10 +295,18 @@ app.post("/api/withdraw", authenticateToken, async (req, res) => {
       type: "withdraw"
     });
 
-    res.json({
-      message: "Withdrawal started successfully",
-      withdrawal
+    sendRealtime(user._id,"withdraw_update",{
+      message:"Withdrawal started",
+      amount:numericAmount,
+      status:"processing"
     });
+
+    await notifyAdmins(
+      "New Withdrawal Request",
+      `User ${user._id} requested $${numericAmount}`
+    );
+
+    res.json({ message: "Withdrawal started successfully", withdrawal });
 
   } catch (err) {
     console.error(err);
@@ -288,16 +324,16 @@ app.get("/api/dashboard", authenticateToken, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const loans = await Loan.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    const withdrawals = await Withdrawal.find({ userId: req.user.id }).sort({ createdAt: -1 });
-    const notifications = await Notification.find({ user: req.user.id }).sort({ createdAt: -1 });
+    const loans = await Loan.find({ userId: req.user.id }).sort({ createdAt:-1 });
+    const withdrawals = await Withdrawal.find({ userId:req.user.id }).sort({ createdAt:-1 });
+    const notifications = await Notification.find({ user:req.user.id }).sort({ createdAt:-1 });
 
     res.json({
-      balances: {
-        deposited: user.depositedBalance || 0,
-        available: user.availableBalance || 0,
-        outstanding: user.outstandingBalance || 0,
-        withdrawn: user.withdrawnBalance || 0
+      balances:{
+        deposited:user.depositedBalance || 0,
+        available:user.availableBalance || 0,
+        outstanding:user.outstandingBalance || 0,
+        withdrawn:user.withdrawnBalance || 0
       },
       loans,
       withdrawals,
@@ -306,12 +342,47 @@ app.get("/api/dashboard", authenticateToken, async (req, res) => {
 
   } catch (err) {
     console.error(err);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message:"Server error" });
   }
 });
 
 /* ================= START SERVER ================= */
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+const { Server } = require("socket.io");
+
+const io = new Server(server,{
+  cors:{ origin:"*", methods:["GET","POST"] }
+});
+
+/* ===== SOCKET CONNECTION ===== */
+
+const onlineUsers = new Map();
+
+io.on("connection",(socket)=>{
+
+  socket.on("register", userId=>{
+    onlineUsers.set(String(userId), socket.id);
+  });
+
+  socket.on("disconnect",()=>{
+    for(const [userId,id] of onlineUsers){
+      if(id === socket.id){
+        onlineUsers.delete(userId);
+        break;
+      }
+    }
+  });
+
+});
+
+/* helper to send realtime event */
+function sendRealtime(userId,event,data){
+  const socketId = onlineUsers.get(String(userId));
+  if(socketId){
+    io.to(socketId).emit(event,data);
+  }
+}
