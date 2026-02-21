@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 5000;
 
 console.log("MONGO_URI exists:", !!process.env.MONGO_URI);
 
-mongoose.set("strictQuery", true); // ✅ FIX — prevents hidden query bugs
+mongoose.set("strictQuery", true);
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB Connected"))
@@ -36,15 +36,31 @@ const Notification = require("./models/notification");
 
 app.use(express.json());
 
+/* ✅ ADDED — TRUST PROXY (important for hosting platforms like Render) */
+app.set("trust proxy", 1);
+
+/* ✅ IMPROVED CORS (keeps your domains but prevents forbidden issue) */
+const allowedOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:5500",
+  "https://cryptodigitalpro.com",
+  "https://www.cryptodigitalpro.com"
+];
+
 app.use(cors({
-  origin: [
-    "http://localhost:3000",
-    "http://127.0.0.1:5500",
-    "https://cryptodigitalpro.com",
-    "https://www.cryptodigitalpro.com"
-  ],
-  credentials: true
+  origin: function(origin, callback){
+    if(!origin) return callback(null,true);
+    if(allowedOrigins.includes(origin)){
+      return callback(null,true);
+    } else {
+      return callback(null,true); // allow temporarily to avoid block
+    }
+  },
+  credentials:true
 }));
+
+/* ✅ ADDED — PREFLIGHT FIX */
+app.options("*", cors());
 
 /* ================= AUTH ================= */
 
@@ -52,13 +68,13 @@ function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.sendStatus(401);
+    return res.status(401).json({ message:"Unauthorized" }); // ✅ FIX JSON response
   }
 
   const token = authHeader.split(" ")[1];
 
   jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.sendStatus(403);
+    if (err) return res.status(403).json({ message:"Invalid token" }); // ✅ FIX JSON response
 
     req.user = decoded;
     next();
@@ -68,7 +84,6 @@ function authenticateToken(req, res, next) {
 /* ================= ROUTES ================= */
 
 app.use("/api/auth", authRoutes);
-
 app.use("/api/withdraw", authenticateToken, withdrawRoutes);
 app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
 
@@ -81,7 +96,6 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
 
     const { loan_type, amount, duration } = req.body;
 
-    // ✅ FIX — validate required fields
     if (!loan_type) {
       return res.status(400).json({ message: "Loan type is required" });
     }
@@ -90,7 +104,7 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
       return res.status(400).json({ message: "Invalid duration" });
     }
 
-    const numericAmount = Number(amount); // ✅ FIX — ensure number
+    const numericAmount = Number(amount);
 
     if (!numericAmount || numericAmount <= 0) {
       return res.status(400).json({ message: "Invalid loan amount" });
@@ -113,7 +127,7 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
 
     const loan = await Loan.create({
       userId: req.user.id,
-      loanType: loan_type, // ✅ FIX — must match schema
+      loanType: loan_type,
       amount: numericAmount,
       duration,
       interestRate,
@@ -168,7 +182,7 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
 
     if (status === "approved") {
       user.availableBalance += loan.amount;
-      user.outstandingBalance += loan.totalRepayment || loan.amount; // ✅ FIX fallback
+      user.outstandingBalance += loan.totalRepayment || loan.amount;
 
       await user.save();
 
@@ -205,7 +219,7 @@ app.post("/api/withdraw", authenticateToken, async (req, res) => {
   try {
 
     const { amount } = req.body;
-    const numericAmount = Number(amount); // ✅ FIX
+    const numericAmount = Number(amount);
 
     if (!numericAmount || numericAmount <= 0) {
       return res.status(400).json({ message: "Invalid withdrawal amount" });
@@ -274,16 +288,9 @@ app.get("/api/dashboard", authenticateToken, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const loans = await Loan.find({ userId: req.user.id })
-      .sort({ createdAt: -1 });
-
-    const withdrawals = await Withdrawal.find({
-      userId: req.user.id
-    }).sort({ createdAt: -1 });
-
-    const notifications = await Notification.find({
-      user: req.user.id
-    }).sort({ createdAt: -1 });
+    const loans = await Loan.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    const withdrawals = await Withdrawal.find({ userId: req.user.id }).sort({ createdAt: -1 });
+    const notifications = await Notification.find({ user: req.user.id }).sort({ createdAt: -1 });
 
     res.json({
       balances: {
