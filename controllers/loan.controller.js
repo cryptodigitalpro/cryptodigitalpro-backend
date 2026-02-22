@@ -1,126 +1,55 @@
-// controllers/loan.controller.js
-
-const Loan = require("../models/loan");
-const User = require("../models/user");
-const Notification = require("../models/notification");
-
-/* =========================================
-   APPLY LOAN
-========================================= */
+const Loan = require("../models/Loan");
+const User = require("../models/User");
+const Notification = require("../models/Notification");
 
 exports.applyLoan = async (req, res) => {
   try {
-    const { amount, duration, loanType } = req.body;
-
+    // ✅ Make sure token middleware worked
     if (!req.user || !req.user.id) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    if (!amount || amount <= 0) {
-      return res.status(400).json({ message: "Invalid loan amount" });
+    const { loanType, amount, duration } = req.body;
+
+    // ✅ Basic validation
+    if (!loanType || !amount || !duration) {
+      return res.status(400).json({ message: "All fields are required" });
     }
 
+    // ✅ Find user
     const user = await User.findById(req.user.id);
-
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (user.kyc_status !== "approved") {
-      return res.status(403).json({
-        message: "KYC approval required before loan application"
-      });
+    // ✅ Optional KYC check (remove if not needed)
+    if (user.kyc_status && user.kyc_status !== "approved") {
+      return res.status(400).json({ message: "KYC not approved" });
     }
 
-    // Prevent multiple active loans
-    const activeLoan = await Loan.findOne({
-      user: user._id,   // ✅ FIXED HERE
-      status: { $in: ["pending", "approved"] }
-    });
-
-    if (activeLoan) {
-      return res.status(400).json({
-        message: "You already have an active loan."
-      });
-    }
-
-    const interestRate = 0.10;
-    const interestAmount = amount * interestRate;
-    const totalRepayment = amount + interestAmount;
-
+    // ✅ Create loan
     const loan = await Loan.create({
-      user: user._id,   // ✅ FIXED HERE
+      user: user._id,      // MUST match your model
+      loanType,
       amount,
       duration,
-      loanType,
-      interestRate,
-      interestAmount,
-      totalRepayment,
       status: "pending"
     });
 
+    // ✅ Optional: create notification
     await Notification.create({
       user: user._id,
-      title: "Loan Submitted",
-      message: `Your loan request of $${amount} is under review.`,
+      message: `Loan application of ${amount} submitted successfully`,
       type: "loan"
     });
 
-    res.status(201).json({
-      message: "Loan submitted successfully",
+    return res.status(201).json({
+      message: "Loan application submitted successfully",
       loan
     });
 
-  } catch (err) {
-    console.error("Apply Loan Error:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-};
-
-
-/* =========================================
-   ADMIN UPDATE LOAN STATUS
-========================================= */
-
-exports.updateLoanStatus = async (req, res) => {
-  try {
-    if (req.user.role !== "admin") {
-      return res.status(403).json({ message: "Access denied" });
-    }
-
-    const { status } = req.body;
-
-    if (!["approved", "rejected"].includes(status)) {
-      return res.status(400).json({ message: "Invalid status" });
-    }
-
-    const loan = await Loan.findById(req.params.id);
-    if (!loan) {
-      return res.status(404).json({ message: "Loan not found" });
-    }
-
-    loan.status = status;
-    await loan.save();
-
-    const user = await User.findById(loan.user); // ✅ FIXED HERE
-
-    if (status === "approved") {
-      user.availableBalance += loan.amount;
-      user.outstandingBalance += loan.totalRepayment;
-      await user.save();
-    }
-
-    await Notification.create({
-      user: loan.user, // ✅ FIXED HERE
-      title: `Loan ${status}`,
-      message: `Your ${loan.loanType} loan was ${status}.`,
-      type: "loan"
-    });
-
-    res.json({ message: "Loan updated successfully" });
-
-  } catch (err) {
-    console.error("Loan Update Error:", err);
-    res.status(500).json({ message: "Server error" });
+  } catch (error) {
+    console.error("Loan Apply Error:", error);
+    return res.status(500).json({ message: "Server error" });
   }
 };
