@@ -14,7 +14,7 @@ const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 const settingsRoutes = require("./routes/user.settings.routes");
 const adminPanel = require("./routes/admin.panel.routes");
 
-const ChatMessage = require("./models/chatMessage");
+const ChatMessage = require("./models/chatmessage");
 const User = require("./models/user");
 const Loan = require("./models/loan");
 const Withdrawal = require("./models/withdrawal");

@@ -54,4 +54,4 @@ chatMessageSchema.index({ room: 1, createdAt: -1 });
 // Optional: unread lookup optimization
 chatMessageSchema.index({ receiver: 1, read: 1 });
 
-module.exports = mongoose.model("ChatMessage", chatMessageSchema);
+module.exports = mongoose.model("chatmessage", chatMessageSchema);
