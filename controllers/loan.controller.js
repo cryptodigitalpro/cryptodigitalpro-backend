@@ -4,52 +4,63 @@ const Notification = require("../models/Notification");
 
 exports.applyLoan = async (req, res) => {
   try {
-    // ✅ Make sure token middleware worked
+    const { amount, duration, loanType } = req.body;
+
     if (!req.user || !req.user.id) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
-    const { loanType, amount, duration } = req.body;
-
-    // ✅ Basic validation
-    if (!loanType || !amount || !duration) {
-      return res.status(400).json({ message: "All fields are required" });
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ message: "Invalid loan amount" });
     }
 
-    // ✅ Find user
     const user = await User.findById(req.user.id);
+
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ✅ Optional KYC check (remove if not needed)
-    if (user.kyc_status && user.kyc_status !== "approved") {
-      return res.status(400).json({ message: "KYC not approved" });
+    // ✅ FIXED KYC FIELD
+    if (user.kyc_status !== "approved") {
+      return res.status(403).json({
+        message: "KYC approval required before loan application"
+      });
     }
 
-    // ✅ Create loan
+    // ✅ FIXED user FIELD
+    const activeLoan = await Loan.findOne({
+      user: user._id,
+      status: { $in: ["pending", "approved"] }
+    });
+
+    if (activeLoan) {
+      return res.status(400).json({
+        message: "You already have an active loan."
+      });
+    }
+
     const loan = await Loan.create({
-      user: user._id,      // MUST match your model
-      loanType,
+      user: user._id,
       amount,
       duration,
+      loanType,
       status: "pending"
     });
 
-    // ✅ Optional: create notification
     await Notification.create({
       user: user._id,
-      message: `Loan application of ${amount} submitted successfully`,
+      title: "Loan Submitted",
+      message: `Your loan request of $${amount} is under review.`,
       type: "loan"
     });
 
-    return res.status(201).json({
-      message: "Loan application submitted successfully",
+    res.status(201).json({
+      message: "Loan submitted successfully",
       loan
     });
 
-  } catch (error) {
-    console.error("Loan Apply Error:", error);
-    return res.status(500).json({ message: "Server error" });
+  } catch (err) {
+    console.error("Apply Loan Error:", err);
+    res.status(500).json({ message: "Server error" });
   }
 };
