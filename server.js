@@ -42,7 +42,10 @@ app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
 app.use(cors({
-  origin: true,
+  origin: [
+    "https://cryptodigitalpro.com",
+    "https://www.cryptodigitalpro.com"
+  ],
   credentials: true
 }));
 
