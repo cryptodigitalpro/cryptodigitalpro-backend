@@ -4,19 +4,27 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const path = require("path");
+const { Server } = require("socket.io");
+const compression = require("compression");
 
 const authRoutes = require("./routes/auth.routes");
-const withdrawRoutes = require("./routes/withdraw.routes");
 const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 const settingsRoutes = require("./routes/user.settings.routes");
 const adminPanel = require("./routes/admin.panel.routes");
 
+const ChatMessage = require("./models/chatMessage");
+const User = require("./models/user");
+const Loan = require("./models/loan");
+const Withdrawal = require("./models/withdrawal");
+const Notification = require("./models/notification");
+
 const app = express();
+app.use(compression());
 const PORT = process.env.PORT || 5000;
 
 /* ================= DATABASE ================= */
-
-console.log("MONGO_URI exists:", !!process.env.MONGO_URI);
 
 mongoose.set("strictQuery", true);
 
@@ -27,48 +35,26 @@ mongoose.connect(process.env.MONGO_URI)
     process.exit(1);
   });
 
-/* ================= MODELS ================= */
-
-const User = require("./models/user");
-const Loan = require("./models/loan");
-const Withdrawal = require("./models/withdrawal");
-const Notification = require("./models/notification");
-
 /* ================= MIDDLEWARE ================= */
 
 app.use(express.json());
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
-const allowedOrigins = [
-  "http://localhost:3000",
-  "http://127.0.0.1:5500",
-  "https://cryptodigitalpro.com",
-  "https://www.cryptodigitalpro.com"
-];
-
 app.use(cors({
-  origin: function(origin, callback){
-    if(!origin) return callback(null,true);
-    if(allowedOrigins.includes(origin)){
-      return callback(null,true);
-    } else {
-      return callback(null,true);
-    }
-  },
-  credentials:true
+  origin: true,
+  credentials: true
 }));
 
-app.options("*", cors());
+app.use("/uploads", express.static("uploads"));
 
 /* ================= AUTH ================= */
 
 function authenticateToken(req, res, next) {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+  if (!authHeader || !authHeader.startsWith("Bearer "))
     return res.status(401).json({ message:"Unauthorized" });
-  }
 
   const token = authHeader.split(" ")[1];
 
@@ -79,15 +65,31 @@ function authenticateToken(req, res, next) {
   });
 }
 
+/* ================= MULTER (CHAT FILE UPLOAD) ================= */
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, "uploads/");
+  },
+  filename: function (req, file, cb) {
+    cb(null, Date.now() + "-" + file.originalname);
+  }
+});
+
+const upload = multer({ storage });
+
 /* ================= ROUTES ================= */
 
 app.use("/api/auth", authRoutes);
-app.use("/api/withdraw", authenticateToken, withdrawRoutes);
 app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
 app.use("/api", authenticateToken, settingsRoutes);
 app.use("/api", authenticateToken, adminPanel);
 
-app.use("/uploads", express.static("uploads"));
+/* ================= CHAT FILE UPLOAD ================= */
+
+app.post("/api/chat/upload", authenticateToken, upload.single("file"), (req, res) => {
+  res.json({ fileUrl: `/uploads/${req.file.filename}` });
+});
 
 /* ======================================================
    =============== ADMIN ALERT HELPER ===================
@@ -103,9 +105,6 @@ async function notifyAdmins(title, message){
         message,
         type: "admin_alert"
       });
-
-      /* REALTIME ADMIN ALERT */
-      sendRealtime(admin._id,"admin_alert",{title,message});
     }
   }catch(err){
     console.error("Admin notify error:",err);
@@ -162,11 +161,9 @@ app.post("/api/loan/apply", authenticateToken, async (req, res) => {
       type: "loan"
     });
 
-    /* REALTIME USER EVENT */
     sendRealtime(req.user.id,"loan_update",{
       message:"Loan submitted successfully",
-      status:"pending",
-      amount:numericAmount
+      status:"pending"
     });
 
     await notifyAdmins(
@@ -222,8 +219,7 @@ app.put("/api/admin/loan/:id", authenticateToken, async (req, res) => {
 
       sendRealtime(loan.userId,"loan_update",{
         message:"Loan approved",
-        status:"approved",
-        amount:loan.amount
+        status:"approved"
       });
     }
 
@@ -324,9 +320,17 @@ app.get("/api/dashboard", authenticateToken, async (req, res) => {
     const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "User not found" });
 
-    const loans = await Loan.find({ userId: req.user.id }).sort({ createdAt:-1 });
-    const withdrawals = await Withdrawal.find({ userId:req.user.id }).sort({ createdAt:-1 });
-    const notifications = await Notification.find({ user:req.user.id }).sort({ createdAt:-1 });
+    const loans = await Loan.find({ userId: req.user.id })
+  .sort({ createdAt:-1 })
+  .lean();
+
+const withdrawals = await Withdrawal.find({ userId:req.user.id })
+  .sort({ createdAt:-1 })
+  .lean();
+
+const notifications = await Notification.find({ user:req.user.id })
+  .sort({ createdAt:-1 })
+  .lean();
 
     res.json({
       balances:{
@@ -352,29 +356,142 @@ const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
-const { Server } = require("socket.io");
-
 const io = new Server(server,{
-  cors:{ origin:"*", methods:["GET","POST"] }
+  cors:{
+    origin:"*",
+    methods:["GET","POST"]
+  }
 });
+
+/* ===== SOCKET CONNECTION ===== */
 
 /* ===== SOCKET CONNECTION ===== */
 
 const onlineUsers = new Map();
 
-io.on("connection",(socket)=>{
+io.on("connection", (socket) => {
 
-  socket.on("register", userId=>{
+  /* ================= REGISTER USER ================= */
+
+  socket.on("register", (userId) => {
     onlineUsers.set(String(userId), socket.id);
+    io.emit("online_users", Array.from(onlineUsers.keys()));
   });
 
-  socket.on("disconnect",()=>{
-    for(const [userId,id] of onlineUsers){
-      if(id === socket.id){
+  /* ================= JOIN ROOM ================= */
+
+  socket.on("join_room", ({ userId, targetUserId }) => {
+    const room = [userId, targetUserId].sort().join("_");
+    socket.join(room);
+  });
+
+  /* ================= PRIVATE MESSAGE ================= */
+
+  socket.on("private_message", async (data) => {
+    try {
+      const { sender, receiver, message, fileUrl } = data;
+      const room = [sender, receiver].sort().join("_");
+
+      const newMessage = await ChatMessage.create({
+        room,
+        sender,
+        receiver,
+        message,
+        fileUrl
+      });
+
+      io.to(room).emit("receive_message", newMessage);
+
+    } catch (err) {
+      console.error("Chat error:", err);
+    }
+  });
+
+  /* ================= LOAD MESSAGES ================= */
+
+  socket.on("load_messages", async ({ userId, targetUserId }) => {
+    try {
+      const room = [userId, targetUserId].sort().join("_");
+
+      const messages = await ChatMessage.find({ room })
+        .sort({ createdAt: -1 })
+        .limit(50)
+        .lean();
+
+      messages.reverse();
+
+      socket.emit("chat_history", messages);
+
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  /* ================= TYPING INDICATOR ================= */
+
+  socket.on("typing", ({ sender, receiver }) => {
+    const room = [sender, receiver].sort().join("_");
+    socket.to(room).emit("user_typing", { sender });
+  });
+
+  socket.on("stop_typing", ({ sender, receiver }) => {
+    const room = [sender, receiver].sort().join("_");
+    socket.to(room).emit("user_stop_typing", { sender });
+  });
+
+  /* ================= MARK MESSAGE AS READ ================= */
+
+  socket.on("mark_as_read", async ({ messageId, userId, targetUserId }) => {
+    try {
+      const room = [userId, targetUserId].sort().join("_");
+
+      await ChatMessage.findByIdAndUpdate(messageId, { read: true });
+
+      io.to(room).emit("message_read", { messageId });
+
+    } catch (err) {
+      console.error("Read error:", err);
+    }
+  });
+
+  /* ================= ADMIN BROADCAST ================= */
+
+  socket.on("admin_broadcast", async ({ adminId, targetUserId, message }) => {
+    try {
+
+      const admin = await User.findById(adminId);
+      if (!admin || admin.role !== "admin") return;
+
+      const room = ["admin", targetUserId].sort().join("_");
+
+      const newMessage = await ChatMessage.create({
+        room,
+        sender: adminId,
+        receiver: targetUserId,
+        message,
+        isAdminMessage: true
+      });
+
+      io.to(room).emit("receive_message", newMessage);
+
+      sendRealtime(targetUserId, "admin_message", newMessage);
+
+    } catch (err) {
+      console.error("Broadcast error:", err);
+    }
+  });
+
+  /* ================= DISCONNECT ================= */
+
+  socket.on("disconnect", () => {
+    for (const [userId, id] of onlineUsers.entries()) {
+      if (id === socket.id) {
         onlineUsers.delete(userId);
         break;
       }
     }
+
+    io.emit("online_users", Array.from(onlineUsers.keys()));
   });
 
 });
