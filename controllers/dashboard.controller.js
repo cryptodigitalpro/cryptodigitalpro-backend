@@ -1,9 +1,9 @@
 // controllers/dashboard.controller.js
 
-const User = require("../models/User");
-const Loan = require("../models/Loan");
-const Withdrawal = require("../models/Withdrawal");
-const Notification = require("../models/Notification");
+const User = require("../models/user");
+const Loan = require("../models/loan");
+const Withdrawal = require("../models/withdrawal");
+const Notification = require("../models/notification");
 
 exports.getDashboard = async (req, res) => {
   try {
@@ -18,10 +18,12 @@ exports.getDashboard = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const loans = await Loan.find({ userId: user._id })
+    // ✅ Loan uses "user"
+    const loans = await Loan.find({ user: user._id })
       .sort({ createdAt: -1 })
       .lean();
 
+    // ✅ Withdrawal uses "userId"
     const withdrawals = await Withdrawal.find({ userId: user._id })
       .sort({ createdAt: -1 })
       .lean();

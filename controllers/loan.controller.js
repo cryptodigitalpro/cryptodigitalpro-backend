@@ -26,7 +26,7 @@ exports.applyLoan = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (user.kycStatus !== "approved") {
+    if (user.kyc_status !== "approved") {
       return res.status(403).json({
         message: "KYC approval required before loan application"
       });
@@ -34,7 +34,7 @@ exports.applyLoan = async (req, res) => {
 
     // Prevent multiple active loans
     const activeLoan = await Loan.findOne({
-      userId: user._id,
+      user: user._id,   // ✅ FIXED HERE
       status: { $in: ["pending", "approved"] }
     });
 
@@ -49,7 +49,7 @@ exports.applyLoan = async (req, res) => {
     const totalRepayment = amount + interestAmount;
 
     const loan = await Loan.create({
-      userId: user._id,
+      user: user._id,   // ✅ FIXED HERE
       amount,
       duration,
       loanType,
@@ -77,6 +77,7 @@ exports.applyLoan = async (req, res) => {
   }
 };
 
+
 /* =========================================
    ADMIN UPDATE LOAN STATUS
 ========================================= */
@@ -101,7 +102,7 @@ exports.updateLoanStatus = async (req, res) => {
     loan.status = status;
     await loan.save();
 
-    const user = await User.findById(loan.userId);
+    const user = await User.findById(loan.user); // ✅ FIXED HERE
 
     if (status === "approved") {
       user.availableBalance += loan.amount;
@@ -110,7 +111,7 @@ exports.updateLoanStatus = async (req, res) => {
     }
 
     await Notification.create({
-      user: loan.userId,
+      user: loan.user, // ✅ FIXED HERE
       title: `Loan ${status}`,
       message: `Your ${loan.loanType} loan was ${status}.`,
       type: "loan"

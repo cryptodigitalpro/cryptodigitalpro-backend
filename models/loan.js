@@ -1,11 +1,11 @@
 const mongoose = require("mongoose");
 
 const loanSchema = new mongoose.Schema({
-  userId: {
+  user: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "User",
     required: true
-  },
+  },   // ✅ THIS COMMA IS REQUIRED
 
   loanType: {
     type: String,
