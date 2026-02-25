@@ -26,7 +26,10 @@ router.post("/login", async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({ token });
+    res.json({
+  accessToken: token,
+  refreshToken: refreshToken
+});
 
   } catch (err) {
     console.error("Login error:", err);
@@ -61,7 +64,10 @@ router.post("/register", async (req, res) => {
       { expiresIn: "1d" }
     );
 
-    res.json({ token });
+    res.json({
+  accessToken: token,
+  refreshToken: refreshToken
+});
 
   } catch (err) {
     console.error("Register error:", err);

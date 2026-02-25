@@ -48,11 +48,36 @@ app.use((req,res,next)=>{
 
 res.setHeader("Content-Security-Policy",`
 default-src 'self';
-script-src 'self' https://cdn.jsdelivr.net https://unpkg.com https://cdn.socket.io;
-style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
-font-src https://fonts.gstatic.com;
-img-src 'self' data:;
-connect-src 'self' https://api.cryptodigitalpro.com wss://api.cryptodigitalpro.com;
+
+script-src 
+'self' 
+https://cdn.jsdelivr.net 
+https://unpkg.com 
+https://cdn.socket.io 
+https://accounts.google.com;
+
+style-src 
+'self' 
+'unsafe-inline' 
+https://fonts.googleapis.com;
+
+font-src 
+https://fonts.gstatic.com;
+
+img-src 
+'self' 
+data: 
+https://accounts.google.com;
+
+connect-src 
+'self' 
+https://api.cryptodigitalpro.com 
+https://accounts.google.com 
+wss://api.cryptodigitalpro.com;
+
+frame-src 
+https://accounts.google.com;
+
 object-src 'none';
 base-uri 'self';
 frame-ancestors 'none';
