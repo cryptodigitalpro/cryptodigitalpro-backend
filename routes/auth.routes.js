@@ -27,9 +27,8 @@ router.post("/login", async (req, res) => {
     );
 
     res.json({
-  accessToken: token,
-  refreshToken: refreshToken
-});
+      accessToken: token
+    });
 
   } catch (err) {
     console.error("Login error:", err);
@@ -65,9 +64,8 @@ router.post("/register", async (req, res) => {
     );
 
     res.json({
-  accessToken: token,
-  refreshToken: refreshToken
-});
+      accessToken: token
+    });
 
   } catch (err) {
     console.error("Register error:", err);

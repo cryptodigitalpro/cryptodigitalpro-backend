@@ -24,60 +24,45 @@ const Notification = require("./models/notification");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+/* ================= GLOBAL ================= */
+
+app.set("trust proxy", 1);
+app.disable("x-powered-by");
+
+app.use(cors({
+  origin: [
+    "https://cryptodigitalpro.com",
+    "https://www.cryptodigitalpro.com"
+  ],
+  credentials: true
+}));
+
+app.use(express.json());
+app.use(compression());
+
 /* ================= DATABASE ================= */
 
 mongoose.set("strictQuery", true);
 
 mongoose.connect(process.env.MONGO_URI)
-.then(()=>console.log("✅ MongoDB Connected"))
-.catch(err=>{
- console.error("Mongo Error:",err);
- process.exit(1);
+.then(() => console.log("✅ MongoDB Connected"))
+.catch(err => {
+  console.error("Mongo Error:", err);
+  process.exit(1);
 });
-
-/* ================= GLOBAL ================= */
-
-app.use(compression());
-app.use(express.json());
-app.set("trust proxy",1);
-app.disable("x-powered-by");
 
 /* ================= SECURITY ================= */
 
-app.use((req,res,next)=>{
+app.use((req, res, next) => {
 
 res.setHeader("Content-Security-Policy",`
 default-src 'self';
-
-script-src 
-'self' 
-https://cdn.jsdelivr.net 
-https://unpkg.com 
-https://cdn.socket.io 
-https://accounts.google.com;
-
-style-src 
-'self' 
-'unsafe-inline' 
-https://fonts.googleapis.com;
-
-font-src 
-https://fonts.gstatic.com;
-
-img-src 
-'self' 
-data: 
-https://accounts.google.com;
-
-connect-src 
-'self' 
-https://api.cryptodigitalpro.com 
-https://accounts.google.com 
-wss://api.cryptodigitalpro.com;
-
-frame-src 
-https://accounts.google.com;
-
+script-src 'self' https://cdn.jsdelivr.net https://unpkg.com https://cdn.socket.io https://accounts.google.com;
+style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
+font-src https://fonts.gstatic.com;
+img-src 'self' data: https://accounts.google.com;
+connect-src 'self' https://api.cryptodigitalpro.com https://accounts.google.com wss://api.cryptodigitalpro.com;
+frame-src https://accounts.google.com;
 object-src 'none';
 base-uri 'self';
 frame-ancestors 'none';
@@ -92,16 +77,6 @@ res.setHeader("Strict-Transport-Security","max-age=31536000; includeSubDomains; 
 
 next();
 });
-
-/* ================= CORS ================= */
-
-app.use(cors({
- origin:[
-  "https://cryptodigitalpro.com",
-  "https://www.cryptodigitalpro.com"
- ],
- credentials:true
-}));
 
 app.use("/uploads", express.static("uploads"));
 
@@ -143,11 +118,13 @@ app.post("/api/chat/upload",authenticateToken,upload.single("file"),(req,res)=>{
  res.json({ fileUrl:`/uploads/${req.file.filename}` });
 });
 
-/* ================= REALTIME ================= */
+/* ================= SERVER ================= */
 
 const server = app.listen(PORT,()=>{
  console.log(`🚀 Server running on port ${PORT}`);
 });
+
+/* ================= SOCKET ================= */
 
 const io = new Server(server,{
  cors:{
@@ -277,161 +254,6 @@ try{
 
  res.json({message:"Loan submitted successfully",loan});
 
-}catch(err){
- console.error(err);
- res.status(500).json({message:"Server error"});
-}
-});
-
-/* ================= ADMIN LOAN UPDATE ================= */
-
-app.put("/api/admin/loan/:id",authenticateToken,async(req,res)=>{
-try{
-
- if(req.user.role!=="admin")
-  return res.status(403).json({message:"Access denied"});
-
- const { status } = req.body;
-
- if(!["approved","rejected"].includes(status))
-  return res.status(400).json({message:"Invalid status"});
-
- const loan=await Loan.findById(req.params.id);
- if(!loan) return res.status(404).json({message:"Loan not found"});
-
- loan.status=status;
- await loan.save();
-
- const user=await User.findById(loan.userId);
-
- if(status==="approved"){
-  user.availableBalance+=loan.amount;
-  user.outstandingBalance+=loan.totalRepayment||loan.amount;
-  await user.save();
-
-  await Notification.create({
-   user:loan.userId,
-   title:"Loan Approved",
-   message:`Your ${loan.loanType} loan has been approved.`,
-   type:"loan"
-  });
-
-  sendRealtime(loan.userId,"loan_update",{status:"approved"});
- }
-
- if(status==="rejected"){
-  await Notification.create({
-   user:loan.userId,
-   title:"Loan Rejected",
-   message:`Your ${loan.loanType} loan was rejected.`,
-   type:"loan"
-  });
-
-  sendRealtime(loan.userId,"loan_update",{status:"rejected"});
- }
-
- res.json({message:"Loan updated successfully"});
-
-}catch(err){
- console.error(err);
- res.status(500).json({message:"Server error"});
-}
-});
-
-/* ================= WITHDRAW ================= */
-
-app.post("/api/withdraw",authenticateToken,async(req,res)=>{
-try{
-
- const numericAmount=Number(req.body.amount);
-
- if(!numericAmount||numericAmount<=0)
-  return res.status(400).json({message:"Invalid withdrawal amount"});
-
- const user=await User.findById(req.user.id);
- if(!user) return res.status(404).json({message:"User not found"});
-
- if(user.kyc_status!=="approved")
-  return res.status(403).json({message:"KYC approval required before withdrawal."});
-
- if(user.availableBalance<numericAmount)
-  return res.status(400).json({message:"Insufficient balance."});
-
- const activeWithdraw=await Withdrawal.findOne({
-  userId:user._id,
-  status:{ $in:["processing","fee_required","verification_hold"] }
- });
-
- if(activeWithdraw)
-  return res.status(400).json({message:"You already have an active withdrawal."});
-
- const withdrawal=await Withdrawal.create({
-  userId:user._id,
-  amount:numericAmount,
-  status:"processing",
-  progress:0,
-  fee_paid:false,
-  admin_verified:false
- });
-
- await Notification.create({
-  user:user._id,
-  title:"Withdrawal Submitted",
-  message:`Your withdrawal of $${numericAmount} is now processing.`,
-  type:"withdraw"
- });
-
- sendRealtime(user._id,"withdraw_update",{status:"processing"});
-
- await notifyAdmins(
-  "New Withdrawal Request",
-  `User ${user._id} requested $${numericAmount}`
- );
-
- res.json({message:"Withdrawal started successfully",withdrawal});
-
-}catch(err){
- console.error(err);
- res.status(500).json({message:"Server error"});
-}
-});
-
-/* ================= DASHBOARD ================= */
-
-app.get("/api/dashboard",authenticateToken,async(req,res)=>{
-try{
-
- const user=await User.findById(req.user.id).lean();
- if(!user) return res.status(404).json({message:"User not found"});
-
- const loans=await Loan.find({userId:req.user.id}).sort({createdAt:-1}).lean();
- const withdrawals=await Withdrawal.find({userId:req.user.id}).sort({createdAt:-1}).lean();
- const notifications=await Notification.find({user:req.user.id}).sort({createdAt:-1}).lean();
-
- res.json({
-  balances:{
-   deposited:user.depositedBalance||0,
-   available:user.availableBalance||0,
-   outstanding:user.outstandingBalance||0,
-   withdrawn:user.withdrawnBalance||0
-  },
-  loans,
-  withdrawals,
-  notifications
- });
-
-}catch(err){
- console.error(err);
- res.status(500).json({message:"Server error"});
-}
-});
-
-/* ================= WITHDRAW STATUS ================= */
-
-app.get("/api/withdraw",authenticateToken,async(req,res)=>{
-try{
- const withdrawal=await Withdrawal.findOne({userId:req.user.id}).sort({createdAt:-1});
- res.json({withdrawal});
 }catch(err){
  console.error(err);
  res.status(500).json({message:"Server error"});
