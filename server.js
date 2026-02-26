@@ -13,6 +13,8 @@ const authRoutes = require("./routes/auth.routes");
 const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 const settingsRoutes = require("./routes/user.settings.routes");
 const adminPanel = require("./routes/admin.panel.routes");
+const loanRoutes = require("./routes/loan.routes");
+const dashboardRoutes = require("./routes/dashboard.routes");
 
 /* MODELS */
 const ChatMessage = require("./models/chatmessage");
@@ -108,6 +110,8 @@ const upload = multer({ storage });
 /* ================= ROUTES ================= */
 
 app.use("/api/auth",authRoutes);
+app.use("/api/loan", loanRoutes);
+app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/admin/withdraw",authenticateToken,adminWithdrawRoutes);
 app.use("/api",authenticateToken,settingsRoutes);
 app.use("/api",authenticateToken,adminPanel);
@@ -195,67 +199,4 @@ async function notifyAdmins(title,message){
  }
 }
 
-/* ================= APPLY LOAN ================= */
-
-app.post("/api/loan/apply",authenticateToken,async(req,res)=>{
-try{
-
- const { loan_type, amount, duration } = req.body;
-
- if(!loan_type)
-  return res.status(400).json({message:"Loan type is required"});
-
- if(!duration||duration<=0)
-  return res.status(400).json({message:"Invalid duration"});
-
- const numericAmount=Number(amount);
-
- if(!numericAmount||numericAmount<=0)
-  return res.status(400).json({message:"Invalid loan amount"});
-
- const activeLoan=await Loan.findOne({
-  userId:req.user.id,
-  status:{ $in:["pending","approved"] }
- });
-
- if(activeLoan)
-  return res.status(400).json({message:"You already have an active loan."});
-
- const interestRate=0.10;
- const interestAmount=numericAmount*interestRate;
-
- const loan=await Loan.create({
-  userId:req.user.id,
-  loanType:loan_type,
-  amount:numericAmount,
-  duration,
-  interestRate,
-  interestAmount,
-  totalRepayment:numericAmount+interestAmount,
-  status:"pending"
- });
-
- await Notification.create({
-  user:req.user.id,
-  title:"Loan Submitted",
-  message:`Your loan request of $${numericAmount} is under review.`,
-  type:"loan"
- });
-
- sendRealtime(req.user.id,"loan_update",{
-  message:"Loan submitted successfully",
-  status:"pending"
- });
-
- await notifyAdmins(
-  "New Loan Application",
-  `User ${req.user.id} applied for $${numericAmount}`
- );
-
- res.json({message:"Loan submitted successfully",loan});
-
-}catch(err){
- console.error(err);
- res.status(500).json({message:"Server error"});
-}
 });

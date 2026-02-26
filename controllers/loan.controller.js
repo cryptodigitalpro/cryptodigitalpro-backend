@@ -1,12 +1,12 @@
-const Loan = require("../models/Loan");
-const User = require("../models/User");
-const Notification = require("../models/Notification");
+const Loan = require("../models/loan");
+const User = require("../models/user");
+const Notification = require("../models/notification");
 
 exports.applyLoan = async (req, res) => {
   try {
     const { amount, duration, loanType } = req.body;
 
-    if (!req.user || !req.user.id) {
+    if (!req.user?.id) {
       return res.status(401).json({ message: "Unauthorized" });
     }
 
@@ -15,19 +15,16 @@ exports.applyLoan = async (req, res) => {
     }
 
     const user = await User.findById(req.user.id);
-
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // ✅ FIXED KYC FIELD
     if (user.kyc_status !== "approved") {
       return res.status(403).json({
         message: "KYC approval required before loan application"
       });
     }
 
-    // ✅ FIXED user FIELD
     const activeLoan = await Loan.findOne({
       user: user._id,
       status: { $in: ["pending", "approved"] }
