@@ -8,6 +8,15 @@ const multer = require("multer");
 const { Server } = require("socket.io");
 const compression = require("compression");
 
+/* ================= APP INIT ================= */
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+app.get("/", (req, res) => {
+  res.json({ status: "API is running 🚀" });
+});
+
 /* ================= ROUTES ================= */
 
 const authRoutes = require("./routes/auth.routes");
@@ -22,11 +31,6 @@ const adminPanelRoutes = require("./routes/admin.panel.routes");
 
 const User = require("./models/user");
 const Notification = require("./models/notification");
-
-/* ================= APP INIT ================= */
-
-const app = express();
-const PORT = process.env.PORT || 5000;
 
 /* ================= GLOBAL ================= */
 
@@ -86,7 +90,7 @@ app.use("/uploads", express.static("uploads"));
 
 /* ================= AUTH MIDDLEWARE ================= */
 
-function authenticateToken(req, res, next) {
+const { protect } = require("./middleware/auth");
   const auth = req.headers.authorization;
 
   if (!auth || !auth.startsWith("Bearer "))
