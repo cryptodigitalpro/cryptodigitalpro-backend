@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
-const jwt = require("jsonwebtoken");
 const multer = require("multer");
 const { Server } = require("socket.io");
 const compression = require("compression");
@@ -13,16 +12,18 @@ const compression = require("compression");
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+/* ================= ROOT CHECK ================= */
+
 app.get("/", (req, res) => {
   res.json({ status: "API is running 🚀" });
 });
 
-/* ================= ROUTES ================= */
+/* ================= ROUTES IMPORT ================= */
 
 const authRoutes = require("./routes/auth.routes");
 const loanRoutes = require("./routes/loan.routes");
 const dashboardRoutes = require("./routes/dashboard.routes");
-const withdrawRoutes = require("./routes/withdraw.routes"); // ✅ added
+const withdrawRoutes = require("./routes/withdraw.routes");
 const adminWithdrawRoutes = require("./routes/admin.withdraw.routes");
 const settingsRoutes = require("./routes/user.settings.routes");
 const adminPanelRoutes = require("./routes/admin.panel.routes");
@@ -32,7 +33,11 @@ const adminPanelRoutes = require("./routes/admin.panel.routes");
 const User = require("./models/user");
 const Notification = require("./models/notification");
 
-/* ================= GLOBAL ================= */
+/* ================= AUTH MIDDLEWARE ================= */
+
+const { protect } = require("./middleware/auth");
+
+/* ================= GLOBAL CONFIG ================= */
 
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
@@ -86,49 +91,36 @@ app.use((req, res, next) => {
   next();
 });
 
+/* ================= STATIC FILES ================= */
+
 app.use("/uploads", express.static("uploads"));
 
-/* ================= AUTH MIDDLEWARE ================= */
-
-const { protect } = require("./middleware/auth");
-  const auth = req.headers.authorization;
-
-  if (!auth || !auth.startsWith("Bearer "))
-    return res.status(401).json({ message: "Unauthorized" });
-
-  const token = auth.split(" ")[1];
-
-  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
-    if (err) return res.status(403).json({ message: "Invalid token" });
-    req.user = decoded;
-    next();
-  });
-}
-
-/* ================= MULTER ================= */
+/* ================= MULTER CONFIG ================= */
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/"),
-  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname)
+  filename: (req, file, cb) =>
+    cb(null, Date.now() + "-" + file.originalname)
 });
 
 const upload = multer({ storage });
 
-/* ================= ROUTES ================= */
+/* ================= API ROUTES ================= */
 
 app.use("/api/auth", authRoutes);
-app.use("/api/loan", authenticateToken, loanRoutes);
-app.use("/api/dashboard", authenticateToken, dashboardRoutes);
-app.use("/api/withdraw", authenticateToken, withdrawRoutes); // ✅ added properly
-app.use("/api/admin/withdraw", authenticateToken, adminWithdrawRoutes);
-app.use("/api/settings", authenticateToken, settingsRoutes);
-app.use("/api/admin", authenticateToken, adminPanelRoutes);
+
+app.use("/api/loan", protect, loanRoutes);
+app.use("/api/dashboard", protect, dashboardRoutes);
+app.use("/api/withdraw", protect, withdrawRoutes);
+app.use("/api/admin/withdraw", protect, adminWithdrawRoutes);
+app.use("/api/settings", protect, settingsRoutes);
+app.use("/api/admin", protect, adminPanelRoutes);
 
 /* ================= CHAT FILE UPLOAD ================= */
 
 app.post(
   "/api/chat/upload",
-  authenticateToken,
+  protect,
   upload.single("file"),
   (req, res) => {
     if (!req.file)
@@ -138,7 +130,7 @@ app.post(
   }
 );
 
-/* ================= SERVER ================= */
+/* ================= SERVER START ================= */
 
 const server = app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
