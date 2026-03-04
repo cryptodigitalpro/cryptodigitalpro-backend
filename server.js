@@ -42,33 +42,43 @@ const { protect } = require("./middleware/auth");
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
 
+/* ================= CORS ================= */
+
 app.use(cors({
   origin: [
-    "https://cryptodigitalpro.com",
-    "https://www.cryptodigitalpro.com"
+    "http://localhost:5500",
+    "http://127.0.0.1:5500",
+    "https://your-netlify-site.netlify.app",
+    "https://cryptodigitalpro.com"
   ],
   credentials: true
 }));
 
-app.use(express.json());
+/* ================= MIDDLEWARE ================= */
+
+app.use(express.json({ limit: "10mb" }));
 app.use(compression());
 
 /* ================= DATABASE ================= */
 
 mongoose.set("strictQuery", true);
 
-mongoose.connect(process.env.MONGO_URI)
-  .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => {
-    console.error("Mongo Error:", err);
-    process.exit(1);
-  });
+mongoose.connect(process.env.MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+})
+.then(() => console.log("✅ MongoDB Connected"))
+.catch(err => {
+  console.error("❌ Mongo Error:", err);
+  process.exit(1);
+});
 
 /* ================= SECURITY HEADERS ================= */
 
 app.use((req, res, next) => {
-
-  res.setHeader("Content-Security-Policy", `
+  res.setHeader(
+    "Content-Security-Policy",
+    `
     default-src 'self';
     script-src 'self' https://cdn.jsdelivr.net https://unpkg.com https://cdn.socket.io https://accounts.google.com;
     style-src 'self' 'unsafe-inline' https://fonts.googleapis.com;
@@ -80,7 +90,8 @@ app.use((req, res, next) => {
     base-uri 'self';
     frame-ancestors 'none';
     form-action 'self';
-  `.replace(/\n/g, " "));
+  `.replace(/\n/g, " ")
+  );
 
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
@@ -108,7 +119,6 @@ const upload = multer({ storage });
 /* ================= API ROUTES ================= */
 
 app.use("/api/auth", authRoutes);
-
 app.use("/api/loan", protect, loanRoutes);
 app.use("/api/dashboard", protect, dashboardRoutes);
 app.use("/api/withdraw", protect, withdrawRoutes);
@@ -123,8 +133,9 @@ app.post(
   protect,
   upload.single("file"),
   (req, res) => {
-    if (!req.file)
+    if (!req.file) {
       return res.status(400).json({ message: "No file uploaded" });
+    }
 
     res.json({ fileUrl: `/uploads/${req.file.filename}` });
   }
@@ -144,7 +155,8 @@ const io = new Server(server, {
       "https://cryptodigitalpro.com",
       "https://www.cryptodigitalpro.com"
     ],
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
@@ -153,14 +165,14 @@ const io = new Server(server, {
 const onlineUsers = new Map();
 
 io.on("connection", (socket) => {
-
   socket.on("register", (userId) => {
     if (!userId) return;
 
     const id = String(userId);
 
-    if (!onlineUsers.has(id))
+    if (!onlineUsers.has(id)) {
       onlineUsers.set(id, new Set());
+    }
 
     onlineUsers.get(id).add(socket.id);
   });
@@ -178,7 +190,6 @@ io.on("connection", (socket) => {
       if (set.size === 0) onlineUsers.delete(uid);
     }
   });
-
 });
 
 /* ================= REALTIME HELPER ================= */
