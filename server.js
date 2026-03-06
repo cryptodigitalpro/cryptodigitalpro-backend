@@ -18,6 +18,10 @@ app.get("/", (req, res) => {
   res.json({ status: "API is running 🚀" });
 });
 
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.url}`);
+  next();
+});
 /* ================= ROUTES IMPORT ================= */
 
 const authRoutes = require("./routes/auth.routes");
@@ -203,6 +207,7 @@ function sendRealtime(userId, event, data) {
   }
 }
 
+}
 /* ================= ADMIN NOTIFY ================= */
 
 async function notifyAdmins(title, message) {
@@ -221,3 +226,4 @@ async function notifyAdmins(title, message) {
     console.error("Admin notify error:", err);
   }
 }
+
