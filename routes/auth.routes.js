@@ -101,13 +101,12 @@ router.post("/register", async (req, res) => {
     });
 
   } catch (err) {
-    console.error("Register error:", err);
+  console.error("LOGIN ERROR:", err);
 
-    res.status(500).json({
-      error: "Server error",
-      details: err.message
-    });
-  }
+  res.status(500).json({
+    error: "Server error",
+    message: err.message,
+    stack: process.env.NODE_ENV === "development" ? err.stack : undefined
+  });
+}
 });
-
-module.exports = router;
