@@ -15,19 +15,16 @@ router.post("/login", async (req, res) => {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    // IMPORTANT: password must be selected
     const user = await User.findOne({ email: cleanEmail }).select("+password");
 
     if (!user) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    // Prevent login if account suspended
     if (user.account_status === "suspended") {
       return res.status(403).json({ error: "Account suspended" });
     }
 
-    // Prevent login for Google users without password
     if (!user.password) {
       return res.status(401).json({
         error: "Use Google login for this account"
@@ -53,15 +50,14 @@ router.post("/login", async (req, res) => {
     });
 
   } catch (err) {
-  console.error("LOGIN ERROR:", err);
+    console.error("LOGIN ERROR:", err);
 
-  res.status(500).json({
-    error: "Server error",
-    message: err.message,
-    stack: process.env.NODE_ENV === "development" ? err.stack : undefined
-  });
-}
-
+    res.status(500).json({
+      error: "Server error",
+      message: err.message
+    });
+  }
+});
 
 /* ================= REGISTER ================= */
 
@@ -101,12 +97,13 @@ router.post("/register", async (req, res) => {
     });
 
   } catch (err) {
-  console.error("LOGIN ERROR:", err);
+    console.error("Register error:", err);
 
-  res.status(500).json({
-    error: "Server error",
-    message: err.message,
-    stack: process.env.NODE_ENV === "development" ? err.stack : undefined
-  });
-}
+    res.status(500).json({
+      error: "Server error",
+      details: err.message
+    });
+  }
 });
+
+module.exports = router;
