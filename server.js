@@ -207,7 +207,14 @@ function sendRealtime(userId, event, data) {
   }
 }
 
-}
+app.use((err, req, res, next) => {
+  console.error("GLOBAL ERROR:", err);
+
+  res.status(500).json({
+    error: "Unexpected server error",
+    message: err.message
+  });
+});
 /* ================= ADMIN NOTIFY ================= */
 
 async function notifyAdmins(title, message) {
